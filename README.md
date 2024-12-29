@@ -34,7 +34,7 @@ To set up the RAG-Powered Document Assistant on your local machine, follow these
 1. **Clone the Repository**:
    Open your terminal and run the following command to clone the repository:
    ```bash
-   git clone https://github.com/yourusername/rag-document-assistant.git
+   git clone https://github.com/SakshiBishnoi/RAG.git
    ```
 
 2. **Navigate to the Project Directory**:
