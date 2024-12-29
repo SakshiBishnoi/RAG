@@ -1,46 +1,77 @@
-# Getting Started with Create React App
+# RAG-Powered Document Assistant
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+## Overview
 
-## Available Scripts
+The RAG-Powered Document Assistant is a full-stack application designed to facilitate document processing and interaction using advanced AI capabilities. This application leverages Google's Gemini API for natural language processing and integrates with a vector database for efficient document retrieval and management.
 
-In the project directory, you can run:
+## Why This Project?
 
-### `npm start`
+In today's digital age, managing and extracting information from documents can be a daunting task. This project aims to simplify the process of document handling by providing a user-friendly interface that allows users to upload, query, and interact with their documents seamlessly. By utilizing state-of-the-art AI technology, users can obtain relevant information quickly and efficiently.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+## What Does It Do?
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+The RAG-Powered Document Assistant offers the following core functionalities:
 
-### `npm test`
+1. **Document Processing**: Users can upload various document formats (PDF, TXT, DOCX) and the application will process these documents to extract meaningful content.
+2. **Chat Interface**: A responsive chat interface allows users to interact with the AI, asking questions and receiving answers based on the uploaded documents.
+3. **RAG Pipeline**: The application implements a Retrieval-Augmented Generation (RAG) pipeline that retrieves relevant document chunks and generates context-aware responses.
+4. **Advanced Features**: Additional features include document summarization, source highlighting, confidence scoring, and conversation export.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## How Does It Work?
 
-### `npm run build`
+The application is built using the following technologies:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- **Frontend**: React with TypeScript for a dynamic user interface.
+- **Backend**: Node.js/Express or Python/FastAPI for handling API requests and document processing.
+- **Vector Database**: Pinecone or Weaviate for storing and retrieving document embeddings.
+- **LLM**: Google's Gemini API for generating responses based on user queries and document context.
+- **UI Framework**: Chakra UI for responsive and accessible design.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Installation Instructions
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+To set up the RAG-Powered Document Assistant on your local machine, follow these steps:
 
-### `npm run eject`
+1. **Clone the Repository**:
+   Open your terminal and run the following command to clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/rag-document-assistant.git
+   ```
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+2. **Navigate to the Project Directory**:
+   ```bash
+   cd rag-document-assistant
+   ```
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+3. **Install Dependencies**:
+   Use npm to install the required dependencies:
+   ```bash
+   npm install
+   ```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+4. **Set Up Environment Variables**:
+   Create a `.env` file in the root of the project and add your API keys and other necessary configurations. For example:
+   ```
+   REACT_APP_GEMINI_API_KEY=your_api_key_here
+   ```
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+5. **Run the Application**:
+   Start the development server:
+   ```bash
+   npm start
+   ```
+   Open your browser and navigate to [http://localhost:3000](http://localhost:3000) to view the application.
 
 ## Learn More
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+For more information on how to use the application, refer to the documentation provided within the app or check out the following resources:
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+- [Create React App Documentation](https://facebook.github.io/create-react-app/docs/getting-started)
+- [React Documentation](https://reactjs.org/)
+
+## Contributing
+
+Contributions are welcome! If you have suggestions for improvements or new features, feel free to open an issue or submit a pull request.
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for more details.
