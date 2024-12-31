@@ -49,6 +49,19 @@ const theme = extendTheme({
         borderRadius: 'xl',
       },
     },
+    Switch: {
+      baseStyle: {
+        track: {
+          bg: 'gray.200',
+          _checked: {
+            bg: '#1a73e8',
+          }
+        },
+        thumb: {
+          bg: 'white',
+        }
+      },
+    },
   },
   toastOptions: {
     defaultOptions: {
@@ -61,42 +74,47 @@ const theme = extendTheme({
 function App() {
   return (
     <ChakraProvider theme={theme}>
-      <Box h="100vh" bg="#f8f9fa" p={4}>
+      <Box minH="100vh" bg="#f8f9fa">
         <Container 
-          maxW="1440px" 
-          h="100%" 
-          display="flex" 
-          flexDirection="column" 
-          gap={4}
+          maxW={{ base: "100%", lg: "1440px" }}
+          h="100vh"
+          p={{ base: 2, sm: 4 }}
+          display="flex"
+          flexDirection="column"
         >
-          <Box flexShrink={0}>
+          <Box flexShrink={0} mb={{ base: 2, md: 4 }}>
             <DocumentUpload />
           </Box>
           <Box 
             flex={1} 
-            display="grid" 
-            gridTemplateColumns={{ base: "1fr", md: "300px 1fr" }}
-            gap={4}
+            display="grid"
+            gridTemplateColumns={{
+              base: "1fr",
+              md: "300px 1fr",
+              xl: "350px 1fr"
+            }}
+            gridTemplateRows="1fr"
+            gap={{ base: 3, md: 4 }}
             minH={0}
+            overflow="hidden"
           >
             <Box 
-              overflowY="auto" 
-              borderRadius="2xl" 
-              bg="white" 
-              p={4}
+              position="relative"
+              h="100%"
+              overflowY="auto"
+              borderRadius="xl"
+              bg="white"
+              p={{ base: 2, sm: 4 }}
               shadow="sm"
-              css={{
-                '&::-webkit-scrollbar': { width: '4px' },
-                '&::-webkit-scrollbar-track': { background: '#f1f3f4' },
-                '&::-webkit-scrollbar-thumb': { 
-                  background: '#dadce0',
-                  borderRadius: '4px',
-                },
-              }}
             >
               <DocumentList />
             </Box>
-            <Box>
+            <Box 
+              h="100%"
+              display="flex"
+              flexDirection="column"
+              overflow="hidden"
+            >
               <ChatInterface />
             </Box>
           </Box>

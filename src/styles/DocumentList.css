@@ -1,0 +1,66 @@
+.document-list-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.document-item {
+  transition: all 0.2s ease-in-out;
+}
+
+.document-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+
+.document-name {
+  word-break: break-word;
+}
+
+.delete-button {
+  opacity: 0.7;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.delete-button:hover {
+  opacity: 1;
+}
+
+/* Mobile First Approach */
+@media (max-width: 480px) {
+  .document-list-container {
+    padding: 0.5rem;
+  }
+  
+  .document-item {
+    padding: 0.75rem;
+  }
+}
+
+/* Tablet */
+@media (min-width: 481px) and (max-width: 1024px) {
+  .document-list-container {
+    padding: 1rem;
+  }
+}
+
+/* Desktop */
+@media (min-width: 1025px) {
+  .document-list-container {
+    padding: 1.25rem;
+  }
+}
+
+/* Prevent layout shifts during transitions */
+@media (prefers-reduced-motion: reduce) {
+  .document-item {
+    transition: none;
+  }
+}
+
+/* High contrast mode support */
+@media (forced-colors: active) {
+  .document-item {
+    border: 1px solid CanvasText;
+  }
+} 
