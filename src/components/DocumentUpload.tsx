@@ -12,6 +12,7 @@ interface FileDocument {
   content: string;
   timestamp: string;
   processed: boolean;
+  summary?: string;
 }
 
 const MotionBox = motion(Box);
@@ -72,7 +73,8 @@ const DocumentUpload: React.FC = () => {
         const updatedDoc: FileDocument = {
           ...tempDoc,
           content: processedDoc.chunks.join('\n'),
-          processed: true
+          processed: true,
+          summary: processedDoc.summary
         };
 
         const docs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]') as FileDocument[];

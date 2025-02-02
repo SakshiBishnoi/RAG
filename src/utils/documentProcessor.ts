@@ -2,6 +2,9 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import * as tf from '@tensorflow/tfjs';
 import * as use from '@tensorflow-models/universal-sentence-encoder';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
 
 // Initialize PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = 
@@ -11,6 +14,7 @@ export interface ProcessedDocument {
   id: string;
   chunks: string[];
   embeddings: number[][];
+  summary?: string;
   metadata: {
     name: string;
     type: string;
@@ -33,7 +37,7 @@ async function loadModel() {
 export async function processPDFDocument(file: File): Promise<ProcessedDocument> {
   try {
     // Load the Universal Sentence Encoder model
-    const model = await loadModel();
+    const encoder = await loadModel();
     // Read the PDF file
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument(arrayBuffer);
@@ -48,7 +52,7 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
       const pageText = textContent.items
         .map((item: any) => item.str)
         .join(' ')
-        .replace(/\s+/g, ' ')  // Normalize whitespace
+        .replace(/s+/g, ' ')  // Normalize whitespace
         .trim();
       fullText += pageText + '\n\n';  // Add double newline for better paragraph separation
     }
@@ -67,7 +71,7 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
     // Generate embeddings for each chunk using Universal Sentence Encoder
     const embeddings = await Promise.all(
       processedChunks.map(async (chunk) => {
-        const embedding = await model.embed(chunk);
+        const embedding = await encoder.embed(chunk);
         const data = await embedding.data();
         return Array.from(data) as number[];
       })
@@ -83,10 +87,17 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
         .dataSync()[0];
     });
 
+    // Generate a summary using Gemini API
+    const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const summaryPrompt = `Please provide a concise summary of the following document content:\n\n${fullText}`;
+    const summaryResult = await geminiModel.generateContent(summaryPrompt);
+    const summaryText = summaryResult.response.text();
+
     return {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,  // More unique ID
       chunks: processedChunks,
       embeddings: embeddings,
+      summary: summaryText,
       metadata: {
         name: file.name,
         type: file.type,

@@ -7,6 +7,8 @@ interface GenerateResponseParams {
   isDocumentMode: boolean;
   documents?: any[];
   previousMessages?: any[];
+  analyzeSummary?: boolean;
+  extractKeyPoints?: boolean;
 }
 
 export async function generateResponse({
@@ -16,7 +18,7 @@ export async function generateResponse({
   previousMessages = []
 }: GenerateResponseParams): Promise<string> {
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
     // Include conversation history for context
     const chatHistory = previousMessages

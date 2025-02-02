@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Box, VStack, Text, IconButton, Progress, Flex } from '@chakra-ui/react';
-import { DeleteIcon } from '@chakra-ui/icons';
+import { Box, VStack, Text, IconButton, Progress, Flex, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalCloseButton } from '@chakra-ui/react';
+import { DeleteIcon, InfoIcon } from '@chakra-ui/icons';
 import { motion } from 'framer-motion';
 import '../styles/DocumentList.css';
+import ReactMarkdown from 'react-markdown';
 
 const MotionBox = motion(Box);
 
@@ -13,10 +14,13 @@ interface Document {
   size: number;
   timestamp: string;
   processed: boolean;
+  summary?: string;
 }
 
 const DocumentList: React.FC = () => {
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const loadDocuments = () => {
     const docs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]');
@@ -61,6 +65,16 @@ const DocumentList: React.FC = () => {
             borderColor={doc.processed ? 'gray.100' : 'blue.200'}
             position="relative"
             overflow="hidden"
+            onClick={() => {
+              setSelectedDoc(doc);
+              setIsModalOpen(true);
+            }}
+            cursor="pointer"
+            _hover={{
+              transform: 'translateY(-1px)',
+              boxShadow: 'sm',
+              borderColor: 'blue.200'
+            }}
           >
             <Flex 
               justify="space-between" 
@@ -96,7 +110,10 @@ const DocumentList: React.FC = () => {
                 variant="ghost"
                 colorScheme="red"
                 borderRadius="full"
-                onClick={() => handleDelete(doc.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDelete(doc.id);
+                }}
                 className="delete-button"
               />
             </Flex>
@@ -112,8 +129,109 @@ const DocumentList: React.FC = () => {
           </MotionBox>
         ))}
       </VStack>
+
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} isCentered size="xl">
+        <ModalOverlay backdropFilter="blur(4px)" />
+        <ModalContent
+          mx={4}
+          borderRadius="2xl"
+          p={0}
+          bg="white"
+          boxShadow="xl"
+          maxW={{ base: "90vw", md: "800px" }}
+        >
+          <ModalHeader
+            borderBottom="1px solid"
+            borderColor="gray.100"
+            py={4}
+            px={6}
+            fontSize={{ base: "lg", md: "xl" }}
+            fontWeight="600"
+          >
+            {selectedDoc?.name}
+          </ModalHeader>
+          <ModalCloseButton
+            size="lg"
+            p={2}
+            top={3}
+            right={3}
+            borderRadius="full"
+            _hover={{ bg: "gray.100" }}
+          />
+          <ModalBody
+            py={6}
+            px={{ base: 4, md: 6 }}
+            maxH="70vh"
+            overflowY="auto"
+            sx={{
+              '&::-webkit-scrollbar': {
+                width: '4px',
+              },
+              '&::-webkit-scrollbar-track': {
+                width: '6px',
+                background: 'gray.50',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'gray.300',
+                borderRadius: '24px',
+              },
+            }}
+          >
+            {selectedDoc?.summary ? (
+              <Box
+                fontSize={{ base: "md", md: "lg" }}
+                lineHeight="tall"
+                color="gray.700"
+                className="markdown-content"
+                sx={{
+                  '& p': {
+                    mb: 4,
+                    lineHeight: 1.8
+                  },
+                  '& h1, & h2, & h3, & h4, & h5, & h6': {
+                    fontWeight: 'bold',
+                    mb: 3,
+                    mt: 4
+                  },
+                  '& ul, & ol': {
+                    pl: 4,
+                    mb: 4
+                  },
+                  '& li': {
+                    mb: 2
+                  },
+                  '& code': {
+                    bg: 'gray.100',
+                    p: 1,
+                    borderRadius: 'md',
+                    fontSize: '0.9em'
+                  },
+                  '& blockquote': {
+                    borderLeftWidth: 4,
+                    borderLeftColor: 'gray.200',
+                    pl: 4,
+                    py: 2,
+                    my: 4
+                  }
+                }}
+              >
+                <ReactMarkdown>{selectedDoc.summary}</ReactMarkdown>
+              </Box>
+            ) : (
+              <Text
+                color="gray.500"
+                fontSize={{ base: "md", md: "lg" }}
+                textAlign="center"
+                py={8}
+              >
+                No summary available for this document.
+              </Text>
+            )}
+          </ModalBody>
+        </ModalContent>
+      </Modal>
     </Box>
   );
 };
 
-export default DocumentList; 
+export default DocumentList;

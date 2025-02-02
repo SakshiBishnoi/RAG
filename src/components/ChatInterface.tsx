@@ -9,6 +9,8 @@ import {
   useToast,
   Switch,
   Flex,
+  UnorderedList,
+  ListItem,
 } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
@@ -21,6 +23,9 @@ interface Message {
   type: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  citations?: string[];
+  summary?: string;
+  keyPoints?: string[];
 }
 
 const ChatInterface: React.FC = () => {
@@ -28,6 +33,7 @@ const ChatInterface: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isDocumentChat, setIsDocumentChat] = useState(true);
+  const [showSummary, setShowSummary] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
@@ -63,6 +69,8 @@ const ChatInterface: React.FC = () => {
         isDocumentMode: isDocumentChat,
         documents: documents,
         previousMessages: messages,
+        analyzeSummary: true,
+        extractKeyPoints: true,
       });
 
       const assistantMessage: Message = {
@@ -86,6 +94,7 @@ const ChatInterface: React.FC = () => {
 
   return (
     <Box className="chat-interface-container">
+
       <Flex 
         className="chat-header"
         justify="space-between" 
@@ -133,7 +142,35 @@ const ChatInterface: React.FC = () => {
               {message.type === 'user' ? (
                 <Text fontSize={{ base: 'sm', md: 'md' }}>{message.content}</Text>
               ) : (
-                <ReactMarkdown>{message.content}</ReactMarkdown>
+                <Box>
+                  <ReactMarkdown>{message.content}</ReactMarkdown>
+                  {message.citations && message.citations.length > 0 && (
+                    <Box mt={2} fontSize="sm" color="gray.600">
+                      <Text fontWeight="500">Sources:</Text>
+                      <UnorderedList>
+                        {message.citations.map((citation, idx) => (
+                          <ListItem key={idx}>{citation}</ListItem>
+                        ))}
+                      </UnorderedList>
+                    </Box>
+                  )}
+                  {message.summary && (
+                    <Box mt={2} p={2} bg="blue.50" borderRadius="md">
+                      <Text fontSize="sm" fontWeight="500" color="blue.700">Summary:</Text>
+                      <Text fontSize="sm" color="blue.600">{message.summary}</Text>
+                    </Box>
+                  )}
+                  {message.keyPoints && message.keyPoints.length > 0 && (
+                    <Box mt={2} p={2} bg="gray.50" borderRadius="md">
+                      <Text fontSize="sm" fontWeight="500">Key Points:</Text>
+                      <UnorderedList fontSize="sm">
+                        {message.keyPoints.map((point, idx) => (
+                          <ListItem key={idx}>{point}</ListItem>
+                        ))}
+                      </UnorderedList>
+                    </Box>
+                  )}
+                </Box>
               )}
             </MotionBox>
           ))}
