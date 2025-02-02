@@ -1,8 +1,10 @@
-import React from 'react';
-import { ChakraProvider, Box, Container, extendTheme } from '@chakra-ui/react';
+import React, { useState, useEffect } from 'react';
+import { ChakraProvider, Box, Container, extendTheme, Tabs, TabList, TabPanels, Tab, TabPanel } from '@chakra-ui/react';
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
+import ConceptGraph from './components/ConceptGraph';
+import { ProcessedDocument } from './utils/documentProcessor';
 
 const theme = extendTheme({
   styles: {
@@ -72,6 +74,19 @@ const theme = extendTheme({
 });
 
 function App() {
+  const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
+
+  useEffect(() => {
+    const loadDocuments = () => {
+      const docs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]');
+      setDocuments(docs);
+    };
+
+    loadDocuments();
+    window.addEventListener('documentsUpdated', loadDocuments);
+    return () => window.removeEventListener('documentsUpdated', loadDocuments);
+  }, []);
+
   return (
     <ChakraProvider theme={theme}>
       <Box minH="100vh" bg="#f8f9fa">
@@ -91,9 +106,12 @@ function App() {
             gridTemplateColumns={{
               base: "1fr",
               md: "300px 1fr",
-              xl: "350px 1fr"
+              xl: "350px minmax(0, 1fr)"
             }}
-            gridTemplateRows="1fr"
+            gridTemplateRows={{
+              base: "auto 1fr",
+              md: "1fr"
+            }}
             gap={{ base: 3, md: 4 }}
             minH={0}
             overflow="hidden"
