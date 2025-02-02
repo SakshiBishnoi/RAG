@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import '../styles/DocumentList.css';
 import ReactMarkdown from 'react-markdown';
 import { ProcessedDocument } from '../utils/documentProcessor';
+import KnowledgeGraph from './KnowledgeGraph';
 
 const MotionBox = motion(Box);
 
@@ -58,6 +59,7 @@ const DocumentList: React.FC = () => {
           size="sm"
           variant="ghost"
           leftIcon={<Icon as={FiShare2} />}
+          isDisabled={true} // Temporarily disabled while graph feature is in development
         >
           Graph View
         </Button>
@@ -184,8 +186,32 @@ const DocumentList: React.FC = () => {
           <ModalHeader>Knowledge Graph</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
-            <Box p={4} bg="white" borderRadius="xl" shadow="sm">
-              <Text>Graph view coming soon...</Text>
+            <Box h="calc(100vh - 120px)" p={4} bg="white" borderRadius="xl" shadow="sm">
+              <KnowledgeGraph
+                data={{
+                  nodes: documents.map(doc => ({
+                    id: doc.id,
+                    label: doc.name,
+                    group: 'document'
+                  })),
+                  edges: documents.flatMap((doc1, index) => 
+                    documents.slice(index + 1).map(doc2 => {
+                      // Simple content similarity check
+                      const similarity = doc1.content.split(' ')
+                        .filter(word => doc2.content.includes(word)).length;
+                      
+                      if (similarity > 10) {
+                        return {
+                          from: doc1.id,
+                          to: doc2.id,
+                          label: `${similarity} shared terms`
+                        };
+                      }
+                      return [];
+                    }).flat()
+                  )
+                }}
+              />
             </Box>
           </ModalBody>
         </ModalContent>
