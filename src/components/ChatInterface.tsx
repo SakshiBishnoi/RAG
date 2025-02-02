@@ -13,6 +13,7 @@ import {
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
 import { generateResponse } from '../utils/api';
+import ReactMarkdown from 'react-markdown';
 
 const MotionBox = motion(Box);
 
@@ -127,11 +128,13 @@ const ChatInterface: React.FC = () => {
               key={`${message.type}-${index}-${message.timestamp.getTime()}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`message ${
-                message.type === 'user' ? 'message-user' : 'message-assistant'
-              }`}
+              className={`message ${message.type === 'user' ? 'message-user' : 'message-assistant'}`}
             >
-              <Text fontSize={{ base: 'sm', md: 'md' }}>{message.content}</Text>
+              {message.type === 'user' ? (
+                <Text fontSize={{ base: 'sm', md: 'md' }}>{message.content}</Text>
+              ) : (
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+              )}
             </MotionBox>
           ))}
           <div ref={messagesEndRef} />
@@ -166,4 +169,4 @@ const ChatInterface: React.FC = () => {
   );
 };
 
-export default ChatInterface; 
+export default ChatInterface;
