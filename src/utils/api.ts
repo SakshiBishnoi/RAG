@@ -46,17 +46,18 @@ Please provide a response that:
 3. Can supplement with general knowledge when relevant, but prioritize document information
 4. If the documents don't contain relevant information, say so and provide a general response`;
     } else {
-      prompt = `You are a helpful AI assistant. Consider the following conversation and documents as context, but feel free to provide broader information.
-
-${documents.length > 0 ? 'Available Documents Context (for reference):\n' + 
-  documents.map(doc => `Document: ${doc.name}\nContent: ${doc.content}`).join('\n\n') : ''}
+      prompt = `You are a helpful AI assistant. Please provide a general response based on your knowledge.
 
 Previous Conversation:
 ${chatHistory}
 
 User Question: ${message}
 
-Please provide a helpful response. You can reference the documents if relevant, but feel free to provide broader information and insights.`;
+Please provide a response that:
+1. Uses your general knowledge to answer the question
+2. Stays focused on the user's query
+3. Does not reference any uploaded documents
+4. Provides accurate and helpful information`;
     }
 
     const result = await model.generateContent(prompt);
@@ -66,4 +67,4 @@ Please provide a helpful response. You can reference the documents if relevant, 
     console.error('Error generating response:', error);
     throw new Error(error instanceof Error ? error.message : 'Failed to generate response');
   }
-} 
+}

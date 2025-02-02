@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Button, Text, useToast, Progress, Flex, Icon, VStack } from '@chakra-ui/react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { FiUploadCloud } from 'react-icons/fi';
 import { processPDFDocument } from '../utils/documentProcessor';
 
@@ -163,4 +163,4 @@ const DocumentUpload: React.FC = () => {
   );
 };
 
-export default DocumentUpload; 
+export default DocumentUpload;
