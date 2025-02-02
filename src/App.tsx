@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { ChakraProvider, Box, Container, extendTheme, Tabs, TabList, TabPanels, Tab, TabPanel } from '@chakra-ui/react';
+import { ChakraProvider, Box, Container, extendTheme, Text } from '@chakra-ui/react';
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
-import ConceptGraph from './components/ConceptGraph';
 import { ProcessedDocument } from './utils/documentProcessor';
 
 const theme = extendTheme({
@@ -91,28 +90,54 @@ function App() {
     <ChakraProvider theme={theme}>
       <Box minH="100vh" bg="#f8f9fa">
         <Container 
-          maxW={{ base: "100%", lg: "1440px" }}
+          maxW={{ base: "100%", lg: "1600px" }}
           h="100vh"
-          p={{ base: 2, sm: 4 }}
+          p={{ base: 2, sm: 3 }}
           display="flex"
           flexDirection="column"
+          gap={3}
         >
-          <Box flexShrink={0} mb={{ base: 2, md: 4 }}>
-            <DocumentUpload />
+          <Box 
+            display="grid"
+            gridTemplateColumns={{
+              base: "1fr",
+              lg: "repeat(3, 1fr)"
+            }}
+            gap={3}
+          >
+            <Box
+              gridColumn={{
+                base: "1/-1",
+                lg: "1/3"
+              }}
+            >
+              <DocumentUpload />
+            </Box>
+            <Box
+              display={{ base: "none", lg: "block" }}
+              bg="white"
+              p={4}
+              borderRadius="xl"
+              shadow="sm"
+              maxH="160px"
+              overflow="hidden"
+            >
+              <Text fontSize="lg" fontWeight="500" mb={3}>
+                Quick Stats
+              </Text>
+              {/* Add quick stats here */}
+            </Box>
           </Box>
+
           <Box 
             flex={1} 
             display="grid"
             gridTemplateColumns={{
               base: "1fr",
-              md: "300px 1fr",
-              xl: "350px minmax(0, 1fr)"
+              md: "320px 1fr",
+              xl: "360px minmax(0, 1fr)"
             }}
-            gridTemplateRows={{
-              base: "auto 1fr",
-              md: "1fr"
-            }}
-            gap={{ base: 3, md: 4 }}
+            gap={3}
             minH={0}
             overflow="hidden"
           >
@@ -122,7 +147,7 @@ function App() {
               overflowY="auto"
               borderRadius="xl"
               bg="white"
-              p={{ base: 2, sm: 4 }}
+              p={3}
               shadow="sm"
             >
               <DocumentList />
@@ -132,6 +157,9 @@ function App() {
               display="flex"
               flexDirection="column"
               overflow="hidden"
+              borderRadius="xl"
+              bg="white"
+              shadow="sm"
             >
               <ChatInterface />
             </Box>

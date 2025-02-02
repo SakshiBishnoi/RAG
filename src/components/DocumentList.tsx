@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, VStack, Text, IconButton, Progress, Flex, Modal, ModalOverlay, ModalContent, ModalHeader, ModalBody, ModalCloseButton, Button, Icon } from '@chakra-ui/react';
-import { DeleteIcon, InfoIcon } from '@chakra-ui/icons';
+import { DeleteIcon } from '@chakra-ui/icons';
 import { FiShare2 } from 'react-icons/fi';
-import ConceptGraph from './ConceptGraph';
 import { motion } from 'framer-motion';
 import '../styles/DocumentList.css';
 import ReactMarkdown from 'react-markdown';
@@ -17,6 +16,7 @@ interface Document extends ProcessedDocument {
   timestamp: string;
   processed: boolean;
   summary?: string;
+  content: string;
 }
 
 const DocumentList: React.FC = () => {
@@ -45,26 +45,37 @@ const DocumentList: React.FC = () => {
 
   return (
     <Box className="document-list-container" position="relative" h="100%" display="flex" flexDirection="column">
-      <Box flex="1" overflowY="auto" mb={16}>
+      <Flex justify="space-between" align="center" mb={4}>
         <Text 
           fontSize={{ base: "md", sm: "lg" }} 
           fontWeight="500" 
-          mb={{ base: 2, sm: 4 }}
         >
           Documents ({documents.length}/5)
         </Text>
-        <VStack spacing={{ base: 2, sm: 3 }} align="stretch">
+        <Button
+          onClick={() => setIsGraphModalOpen(true)}
+          colorScheme="blue"
+          size="sm"
+          variant="ghost"
+          leftIcon={<Icon as={FiShare2} />}
+        >
+          Graph View
+        </Button>
+      </Flex>
+
+      <Box flex="1" overflowY="auto">
+        <VStack spacing={2} align="stretch">
           {documents.map(doc => (
             <MotionBox
               key={doc.id}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              p={{ base: 2, sm: 3 }}
+              transition={{ duration: 0.15 }}
+              p={2.5}
               className="document-item"
               bg={doc.processed ? 'white' : 'blue.50'}
-              borderRadius="xl"
+              borderRadius="lg"
               borderWidth={1}
               borderColor={doc.processed ? 'gray.100' : 'blue.200'}
               position="relative"
@@ -83,34 +94,34 @@ const DocumentList: React.FC = () => {
               <Flex 
                 justify="space-between" 
                 align="center" 
-                mb={doc.processed ? 0 : 2}
-                gap={2}
+                gap={3}
               >
-                <VStack 
-                  align="start" 
-                  spacing={{ base: 0.5, sm: 1 }} 
-                  flex={1}
-                >
+                <Box flex={1} minW={0}>
                   <Text 
                     fontWeight="500" 
-                    fontSize={{ base: "xs", sm: "sm" }}
+                    fontSize="sm"
                     noOfLines={1}
                     title={doc.name}
                     className="document-name"
+                    mb={1}
                   >
                     {doc.name}
                   </Text>
-                  <Text 
-                    fontSize={{ base: "2xs", sm: "xs" }} 
+                  <Flex 
+                    fontSize="xs" 
                     color="gray.500"
+                    gap={2}
+                    align="center"
                   >
-                    {new Date(doc.timestamp).toLocaleDateString()}
-                  </Text>
-                </VStack>
+                    <Text>{new Date(doc.timestamp).toLocaleDateString()}</Text>
+                    <Text>•</Text>
+                    <Text>{(doc.size / 1024).toFixed(1)} KB</Text>
+                  </Flex>
+                </Box>
                 <IconButton
                   aria-label="Delete document"
                   icon={<DeleteIcon />}
-                  size={{ base: "xs", sm: "sm" }}
+                  size="sm"
                   variant="ghost"
                   colorScheme="red"
                   borderRadius="full"
@@ -119,6 +130,8 @@ const DocumentList: React.FC = () => {
                     handleDelete(doc.id);
                   }}
                   className="delete-button"
+                  opacity={0.6}
+                  _hover={{ opacity: 1 }}
                 />
               </Flex>
               {!doc.processed && (
@@ -128,6 +141,7 @@ const DocumentList: React.FC = () => {
                   colorScheme="blue"
                   borderRadius="full"
                   bg="blue.100"
+                  mt={2}
                 />
               )}
             </MotionBox>
@@ -135,19 +149,47 @@ const DocumentList: React.FC = () => {
         </VStack>
       </Box>
 
-      <Box position="absolute" bottom={4} left={0} right={0} textAlign="center" bg="white" zIndex={1} px={4}>
-        <Button
-          onClick={() => setIsGraphModalOpen(true)}
-          colorScheme="blue"
-          size="lg"
-          borderRadius="full"
-          shadow="lg"
-          leftIcon={<Icon as={FiShare2} />}
-          width="90%"
-        >
-          Knowledge Graph
-        </Button>
-      </Box>
+      {selectedDoc && (
+        <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} size="2xl">
+          <ModalOverlay />
+          <ModalContent borderRadius="xl">
+            <ModalHeader>
+              <Text noOfLines={1}>{selectedDoc.name}</Text>
+              <Text fontSize="sm" color="gray.500" fontWeight="normal" mt={1}>
+                {new Date(selectedDoc.timestamp).toLocaleString()}
+              </Text>
+            </ModalHeader>
+            <ModalCloseButton />
+            <ModalBody pb={6}>
+              {selectedDoc.summary && (
+                <Box mb={4} p={3} bg="gray.50" borderRadius="lg">
+                  <Text fontWeight="500" mb={2}>Summary</Text>
+                  <ReactMarkdown>{selectedDoc.summary}</ReactMarkdown>
+                </Box>
+              )}
+              <Box>
+                <Text fontWeight="500" mb={2}>Content Preview</Text>
+                <Box maxH="400px" overflowY="auto" p={3} bg="gray.50" borderRadius="lg">
+                  <ReactMarkdown>{selectedDoc.content}</ReactMarkdown>
+                </Box>
+              </Box>
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+      )}
+
+      <Modal isOpen={isGraphModalOpen} onClose={() => setIsGraphModalOpen(false)} size="full">
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Knowledge Graph</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <Box p={4} bg="white" borderRadius="xl" shadow="sm">
+              <Text>Graph view coming soon...</Text>
+            </Box>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
     </Box>
   );
 };

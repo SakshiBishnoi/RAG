@@ -103,64 +103,69 @@ const DocumentUpload: React.FC = () => {
 
   return (
     <MotionBox
-      initial={{ opacity: 0, y: -10 }}
+      initial={{ opacity: 0, y: -5 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
+      transition={{ duration: 0.3 }}
       bg="white"
-      borderRadius="2xl"
-      p={6}
+      borderRadius="xl"
+      p={4}
       shadow="sm"
     >
-      <VStack spacing={4} align="center">
-        <Icon 
-          as={FiUploadCloud} 
-          w={8} 
-          h={8} 
-          color={isProcessing ? "blue.500" : "gray.400"} 
-        />
-        <Text fontSize="lg" fontWeight="500">
-          Upload Documents
-        </Text>
-        <Box w="100%" maxW="400px">
-          <Flex justify="space-between" mb={2}>
-            <Text fontSize="sm" color="gray.600">
-              {(totalSize / (1024 * 1024)).toFixed(1)} MB used
-            </Text>
-            <Text fontSize="sm" color="gray.600">
-              {(MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0)} MB total
+      <Flex direction={{ base: "column", md: "row" }} align="center" gap={4}>
+        <VStack spacing={3} align="start" flex={1}>
+          <Flex align="center" gap={3}>
+            <Icon 
+              as={FiUploadCloud} 
+              w={6} 
+              h={6} 
+              color={isProcessing ? "blue.500" : "gray.400"} 
+            />
+            <Text fontSize="lg" fontWeight="500">
+              Upload Documents
             </Text>
           </Flex>
-          <Progress 
-            value={(totalSize / MAX_TOTAL_SIZE) * 100} 
-            size="sm" 
-            colorScheme="blue" 
-            borderRadius="full"
-            bg="gray.100"
-            isIndeterminate={isProcessing}
+          
+          <Box w="100%">
+            <Flex justify="space-between" mb={1.5} fontSize="sm" color="gray.600">
+              <Text>{(totalSize / (1024 * 1024)).toFixed(1)} MB used</Text>
+              <Text>{(MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0)} MB total</Text>
+            </Flex>
+            <Progress 
+              value={(totalSize / MAX_TOTAL_SIZE) * 100} 
+              size="sm" 
+              colorScheme="blue" 
+              borderRadius="full"
+              bg="gray.100"
+              isIndeterminate={isProcessing}
+            />
+          </Box>
+        </VStack>
+
+        <Box>
+          <input
+            type="file"
+            multiple
+            accept=".txt,.pdf,.docx"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+            id="file-upload"
+            disabled={isProcessing}
           />
+          <Button
+            as="label"
+            htmlFor="file-upload"
+            leftIcon={<FiUploadCloud />}
+            size="md"
+            variant="solid"
+            px={6}
+            isDisabled={isProcessing}
+            cursor={isProcessing ? "not-allowed" : "pointer"}
+            minW={{ base: "full", md: "auto" }}
+          >
+            {isProcessing ? 'Processing...' : 'Choose Files'}
+          </Button>
         </Box>
-        <input
-          type="file"
-          multiple
-          accept=".txt,.pdf,.docx"
-          onChange={handleFileUpload}
-          style={{ display: 'none' }}
-          id="file-upload"
-          disabled={isProcessing}
-        />
-        <Button
-          as="label"
-          htmlFor="file-upload"
-          leftIcon={<FiUploadCloud />}
-          size="lg"
-          variant="solid"
-          px={8}
-          isDisabled={isProcessing}
-          cursor={isProcessing ? "not-allowed" : "pointer"}
-        >
-          {isProcessing ? 'Processing...' : 'Choose Files'}
-        </Button>
-      </VStack>
+      </Flex>
     </MotionBox>
   );
 };
