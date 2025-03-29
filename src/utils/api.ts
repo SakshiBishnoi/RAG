@@ -41,6 +41,7 @@ export async function generateResponse({
     }]);
     return generateWithDeepseek(messages);
   }
+
   try {
     const model = getGeminiClient().getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
@@ -51,12 +52,21 @@ export async function generateResponse({
 
     let prompt = "";
     if (isDocumentMode) {
-      // Create context from documents
+      // Create context from documents with better formatting
       const documentContext = documents
-        .map(doc => `Document: ${doc.name}\nContent: ${doc.content}`)
-        .join('\n\n');
+        .map(doc => {
+          const chunks = doc.content.split('\n\n');
+          return `Document: ${doc.name}\n\nRelevant Sections:\n${chunks
+            .map((chunk: string, i: number) => `[Section ${i + 1}] ${chunk.trim()}`)
+            .join('\n\n')}`;
+        })
+        .join('\n\n---\n\n');
 
-      prompt = `You are a helpful AI assistant. Use the following documents as your primary knowledge source, but you can also provide additional relevant information when necessary.
+      prompt = `You are a helpful AI assistant specialized in analyzing and answering questions about the provided documents. Your responses must be:
+
+1. Strictly based on the document content below
+2. Clearly reference which document and section you're using (e.g., "According to Document X, Section Y...")
+3. If the answer isn't in the documents, say "This information is not found in the provided documents"
 
 Document Context:
 ${documentContext}
@@ -67,10 +77,9 @@ ${chatHistory}
 User Question: ${message}
 
 Please provide a response that:
-1. Primarily uses information from the provided documents
-2. Clearly indicates when you're referencing document content
-3. Can supplement with general knowledge when relevant, but prioritize document information
-4. If the documents don't contain relevant information, say so and provide a general response`;
+1. Directly quotes relevant sections when possible
+2. Clearly cites which document and section each piece of information comes from
+3. Does not make up information not present in the documents`;
     } else {
       prompt = `You are a helpful AI assistant. Please provide a general response based on your knowledge.
 
