@@ -1,6 +1,21 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import {
+  getCurrentModel,
+  getGeminiClient,
+  getOpenRouterClient,
+  generateWithDeepseek,
+  initializeModels
+} from './modelConfig';
 
-const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
+// Initialize models when the app starts
+if (process.env.REACT_APP_GEMINI_API_KEY && process.env.REACT_APP_OPENROUTER_API_KEY) {
+  initializeModels({
+    geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY,
+    openRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY,
+    siteUrl: window.location.href,
+    siteName: 'RAG Application'
+  });
+}
 
 interface GenerateResponseParams {
   message: string;
@@ -17,8 +32,17 @@ export async function generateResponse({
   documents = [],
   previousMessages = []
 }: GenerateResponseParams): Promise<string> {
+  const currentModel = getCurrentModel();
+  
+  if (currentModel === 'deepseek') {
+    const messages = previousMessages.concat([{
+      type: 'user',
+      content: message
+    }]);
+    return generateWithDeepseek(messages);
+  }
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const model = getGeminiClient().getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
     // Include conversation history for context
     const chatHistory = previousMessages

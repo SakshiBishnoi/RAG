@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { ChakraProvider, Box, Container, extendTheme, Text } from '@chakra-ui/react';
+import { ChakraProvider, Box, Container, extendTheme, Text, Select } from '@chakra-ui/react';
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
 import { ProcessedDocument } from './utils/documentProcessor';
+import { setCurrentModel, getCurrentModel } from './utils/modelConfig';
 
 const theme = extendTheme({
   styles: {
@@ -74,6 +75,13 @@ const theme = extendTheme({
 
 function App() {
   const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
+  const [selectedModel, setSelectedModel] = useState<'gemini' | 'deepseek'>(getCurrentModel());
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const model = e.target.value as 'gemini' | 'deepseek';
+    setSelectedModel(model);
+    setCurrentModel(model);
+  };
 
   useEffect(() => {
     const loadDocuments = () => {
@@ -97,6 +105,18 @@ function App() {
           flexDirection="column"
           gap={3}
         >
+          <Box display="flex" justifyContent="flex-end" mb={2}>
+            <Select 
+              value={selectedModel} 
+              onChange={handleModelChange}
+              width="200px"
+              bg="white"
+              borderRadius="full"
+            >
+              <option value="gemini">Gemini</option>
+              <option value="deepseek">Deepseek</option>
+            </Select>
+          </Box>
           <Box 
             display="grid"
             gridTemplateColumns={{

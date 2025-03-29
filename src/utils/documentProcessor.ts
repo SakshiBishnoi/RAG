@@ -2,9 +2,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import * as tf from '@tensorflow/tfjs';
 import * as use from '@tensorflow-models/universal-sentence-encoder';
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.REACT_APP_GEMINI_API_KEY || '');
+import { getCurrentModel, getGeminiClient, getOpenRouterClient, generateWithDeepseek } from './modelConfig';
 
 // Initialize PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = 
@@ -87,11 +85,22 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
         .dataSync()[0];
     });
 
-    // Generate a summary using Gemini API
-    const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
-    const summaryPrompt = `Please provide a concise summary of the following document content:\n\n${fullText}`;
-    const summaryResult = await geminiModel.generateContent(summaryPrompt);
-    const summaryText = summaryResult.response.text();
+    // Generate a summary using the selected model
+    const currentModel = getCurrentModel();
+    let summaryText = '';
+    
+    if (currentModel === 'deepseek') {
+      summaryText = await generateWithDeepseek([{
+        type: 'user',
+        content: `Please provide a concise summary of the following document content:\n\n${fullText}`
+      }]);
+    } else {
+      const geminiModel = getGeminiClient().getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+      const summaryResult = await geminiModel.generateContent(
+        `Please provide a concise summary of the following document content:\n\n${fullText}`
+      );
+      summaryText = summaryResult.response.text();
+    }
 
     return {
       id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,  // More unique ID
