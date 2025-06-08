@@ -110,40 +110,65 @@ export class DocumentProcessingService {
 
     if (sentences.length > 0) {
         try {
-            const allSentenceEmbeddings: number[][] = [];
-            const SENTENCE_EMBEDDING_BATCH_SIZE = 64; // Tunable
-
-            for (let i = 0; i < sentences.length; i += SENTENCE_EMBEDDING_BATCH_SIZE) {
-              const batchSentences = sentences.slice(i, i + SENTENCE_EMBEDDING_BATCH_SIZE);
-              if (batchSentences.length > 0) {
-                const batchSentenceEmbeddingsTensor = await this.sentenceEncoder.embed(batchSentences);
-                const batchEmbeddingsArray = await batchSentenceEmbeddingsTensor.array() as number[][];
-                allSentenceEmbeddings.push(...batchEmbeddingsArray);
-                tf.dispose(batchSentenceEmbeddingsTensor as unknown as tf.Tensor); // Dispose tensor for this batch
-              }
-            }
-            const sentenceEmbeddings = allSentenceEmbeddings; // Use this for similarity calculation
-
             const SIMILARITY_THRESHOLD = 0.4;
-            let currentChunkSentences: string[] = [];
+            const SENTENCE_EMBEDDING_BATCH_SIZE = 32;
+            const SENTENCE_SEGMENT_SIZE = 128;
 
-            for (let i = 0; i < sentences.length; i++) {
-                currentChunkSentences.push(sentences[i]);
-                // Check similarity with the NEXT sentence to decide if current sentence is the end of a chunk
-                if (i < sentences.length - 1) {
-                    const similarity = calculateCosineSimilarity(sentenceEmbeddings[i], sentenceEmbeddings[i + 1]);
-                    if (similarity < SIMILARITY_THRESHOLD) {
-                        finalChunks.push(currentChunkSentences.join(' ').trim());
-                        currentChunkSentences = []; // Reset for the next chunk
+            let chunkBuffer: string[] = []; // Holds sentences for the current chunk being built across segments
+
+            for (let segmentStart = 0; segmentStart < sentences.length; segmentStart += SENTENCE_SEGMENT_SIZE) {
+                const segmentEnd = Math.min(segmentStart + SENTENCE_SEGMENT_SIZE, sentences.length);
+                const currentSegmentSentences = sentences.slice(segmentStart, segmentEnd);
+
+                if (currentSegmentSentences.length === 0) continue;
+
+                // 1. Embed sentences for the current segment in batches
+                const segmentSentenceEmbeddings: number[][] = [];
+                for (let i = 0; i < currentSegmentSentences.length; i += SENTENCE_EMBEDDING_BATCH_SIZE) {
+                    const batchSentences = currentSegmentSentences.slice(i, i + SENTENCE_EMBEDDING_BATCH_SIZE);
+                    if (batchSentences.length > 0) {
+                        const batchTensor = await this.sentenceEncoder.embed(batchSentences);
+                        const batchEmbeddings = await batchTensor.array() as number[][];
+                        segmentSentenceEmbeddings.push(...batchEmbeddings);
+                        tf.dispose(batchTensor as unknown as tf.Tensor);
                     }
                 }
-            }
-            // Add the last chunk
-            if (currentChunkSentences.length > 0) {
-                finalChunks.push(currentChunkSentences.join(' ').trim());
+
+                if (segmentSentenceEmbeddings.length === 0 && currentSegmentSentences.length > 0) {
+                    console.warn(`Segment starting at index ${segmentStart} yielded no embeddings despite having sentences. Adding raw segment as a chunk.`);
+                    if(chunkBuffer.length > 0) { // Finalize previous chunk if any
+                        finalChunks.push(chunkBuffer.join(' ').trim());
+                        chunkBuffer = [];
+                    }
+                    if(currentSegmentSentences.join('').trim().length > 0) { // ensure there's actual text
+                       finalChunks.push(currentSegmentSentences.join(' ').trim());
+                    }
+                    continue;
+                }
+
+                // 2. Process sentences in the current segment to form chunks
+                for (let i = 0; i < currentSegmentSentences.length; i++) {
+                    chunkBuffer.push(currentSegmentSentences[i]);
+
+                    // Check similarity with the NEXT sentence *within this segment*
+                    if (i < currentSegmentSentences.length - 1) {
+                        const similarity = calculateCosineSimilarity(segmentSentenceEmbeddings[i], segmentSentenceEmbeddings[i + 1]);
+                        if (similarity < SIMILARITY_THRESHOLD) {
+                            finalChunks.push(chunkBuffer.join(' ').trim());
+                            chunkBuffer = [];
+                        }
+                    }
+                    // If it's the last sentence of the segment, the chunkBuffer content will carry over
+                    // to be processed with the next segment or finalized after the main loop.
+                }
+            } // End of segment loop
+
+            // Add any remaining sentences in the chunkBuffer as the last chunk
+            if (chunkBuffer.length > 0) {
+                finalChunks.push(chunkBuffer.join(' ').trim());
             }
 
-            const CHUNK_EMBEDDING_BATCH_SIZE = 32; // Tunable
+            const CHUNK_EMBEDDING_BATCH_SIZE = 32;
             if (finalChunks.length > 0) {
               for (let i = 0; i < finalChunks.length; i += CHUNK_EMBEDDING_BATCH_SIZE) {
                 const batchChunks = finalChunks.slice(i, i + CHUNK_EMBEDDING_BATCH_SIZE);
