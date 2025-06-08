@@ -72,8 +72,9 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
           type: file.type,
           size: file.size,
           timestamp: new Date().toISOString(),
-          processed: false,
-          // 'content' field is not part of FileDocument in App.tsx, so not included here
+          processed: false, // Initially not processed
+          numChunks: 0,     // Default value
+          // previewContent and fullTextLength will be populated by App.tsx after processing
         };
         onAddDocument(tempDoc); // Add document with temp metadata to App state
 
