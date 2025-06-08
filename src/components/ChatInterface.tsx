@@ -15,11 +15,11 @@ import {
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
 import { generateResponse, generateHypotheticalDocument, rerankChunksWithLLM, compressChunkWithLLM } from '../utils/api';
-// retrieveRelevantChunks and loadSentenceEncoder will now come from props via services
-import { RelevantChunk } from '../services/VectorStoreService'; // Updated import path for RelevantChunk
+// retrieveRelevantChunks (from vectorStore prop) and sentenceEncoder (prop) are used.
+import { RelevantChunk } from '../services/VectorStoreService';
 import { FileDocument } from '../App';
 import ReactMarkdown from 'react-markdown';
-import { VectorStoreService } from '../services/VectorStoreService'; // Import service
+import { VectorStoreService } from '../services/VectorStoreService';
 import * as use from '@tensorflow-models/universal-sentence-encoder'; // For sentenceEncoder prop type
 
 const MotionBox = motion(Box);
@@ -129,10 +129,40 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
         // End of HyDE Step
 
+        // Ensure queryForRetrieval is an embedding array before calling vectorStore
+        let finalQueryEmbedding: number[];
+        if (typeof queryForRetrieval === 'string') {
+          if (!sentenceEncoder) {
+            // This should ideally be caught by isAppInitialized check earlier or handled more gracefully
+            toast({ title: "Error", description: "Sentence encoder not ready for query embedding.", status: "error" });
+            setIsLoading(false); // Reset main loading state
+            setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
+            return;
+          }
+          const tempIsEmbeddingOriginalQuery = !isGeneratingHyDE; // Only set new loading if HyDE didn't run
+          if (tempIsEmbeddingOriginalQuery) setIsGeneratingHyDE(true); // Reuse HyDE loading for this brief step
+          console.log("HyDE failed or skipped, embedding original query for retrieval.");
+          try {
+            const originalQueryTensor = await sentenceEncoder.embed(queryForRetrieval);
+            finalQueryEmbedding = Array.from(await originalQueryTensor.dataSync());
+            originalQueryTensor.dispose();
+          } catch (embedError) {
+            console.error("Error embedding original query:", embedError);
+            if (tempIsEmbeddingOriginalQuery) setIsGeneratingHyDE(false);
+            toast({ title: "Error", description: `Failed to embed original query: ${embedError instanceof Error ? embedError.message : String(embedError)}`, status: "error" });
+            setIsLoading(false); // Reset main loading state
+            setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
+            return;
+          }
+          if (tempIsEmbeddingOriginalQuery) setIsGeneratingHyDE(false);
+        } else {
+          finalQueryEmbedding = queryForRetrieval; // It's already an embedding array
+        }
+
         if (!vectorStore) {
           throw new Error("Vector store not available for chunk retrieval.");
         }
-        let retrievedChunks = await vectorStore.retrieveRelevantChunks(queryForRetrieval, activeDocIds, 15);
+        let retrievedChunks = await vectorStore.retrieveRelevantChunks(finalQueryEmbedding, activeDocIds, 15);
 
         if (retrievedChunks.length > 0) {
           setIsReranking(true);

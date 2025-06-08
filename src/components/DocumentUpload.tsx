@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Button, Text, useToast, Progress, Flex, Icon, VStack } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import { FiUploadCloud } from 'react-icons/fi';
-import { processPDFDocument } from '../utils/documentProcessor';
+// import { processPDFDocument } from '../utils/documentProcessor'; // No longer used directly
 import { FileDocument } from '../App'; // Import FileDocument from App
 
 const MotionBox = motion(Box);
@@ -10,14 +10,15 @@ const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB
 
 interface DocumentUploadProps {
   allDocuments: FileDocument[];
-  onAddDocument: (doc: FileDocument) => void;
-  onUpdateDocument: (docId: string, updates: Partial<FileDocument>) => void;
+  onAddInitialDoc: (doc: FileDocument) => void; // Renamed prop
+  onProcessFile: (file: File, tempDocId: string) => Promise<void>; // New prop
+  // onUpdateDocument is effectively replaced by onProcessFile's orchestration in App.tsx
 }
 
 const DocumentUpload: React.FC<DocumentUploadProps> = ({
   allDocuments,
-  onAddDocument,
-  onUpdateDocument,
+  onAddInitialDoc,
+  onProcessFile,
 }) => {
   const [totalSize, setTotalSize] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);

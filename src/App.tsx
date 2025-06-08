@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // Added useRef
 import {
   ChakraProvider,
   Box,
@@ -218,69 +218,18 @@ function App() {
         });
       }
     }
-  }, [isAppInitialized, geminiConfigured, selectedModel, openRouterApiKey, toast]);
+  }, [isAppInitialized, geminiConfigured, selectedModel, openRouterApiKey, toast]); // This is the original, correct useEffect
 
+  // Removed duplicated useEffect block and one duplicated handleModelChange function that were here
 
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const model = e.target.value as 'gemini' | 'deepseek';
-    setDocuments(storedDocs);
-
-    const storedApiKey = localStorage.getItem('openRouterApiKey');
-    if (storedApiKey) setOpenRouterApiKey(storedApiKey);
-
-    const storedModelString = localStorage.getItem('openRouterModelString');
-    if (storedModelString) setOpenRouterModelString(storedModelString);
-
-    // Initialize models (especially if OpenRouter key might come from localStorage)
-    // This might need adjustment if DeepSeek is OpenRouter based and needs the key immediately
-    // For now, assume Gemini is default and OpenRouter (DeepSeek) can be configured.
-    // A more robust approach would be to initialize/re-initialize in handleSaveSettings.
-    // Initialize models with keys from .env and potentially from localStorage
-    initializeModels({
-      geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '', // Ensure it's always a string
-      userProvidedOpenRouterApiKey: storedApiKey || '', // Pass stored user key
-      envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '', // Pass env key as fallback
-      userProvidedOpenRouterModel: storedModelString || undefined, // Pass stored user model
-      siteUrl: window.location.href,
-      siteName: 'RAG Application Demo', // Example site name
-    });
-
-    const geminiIsReady = isGeminiConfigured();
-    setGeminiConfigured(geminiIsReady);
-
-    if (!geminiIsReady && selectedModel === 'gemini') {
-      if (openRouterApiKey && openRouterApiKey.trim() !== '') { // Check if OpenRouter is configured
-        setSelectedModel('deepseek');
-        setCurrentModel('deepseek');
-        toast({
-          title: "Gemini Not Configured",
-          description: "Gemini API key is missing. Switched to OpenRouter as it is configured.",
-          status: "warning",
-          duration: 5000,
-          isClosable: true,
-        });
-      } else {
-        toast({
-          title: "No Models Configured",
-          description: "Neither Gemini nor OpenRouter is configured. Please set API keys in Settings or environment variables.",
-          status: "error",
-          duration: 7000,
-          isClosable: true,
-        });
-        // Optionally, open settings modal here too: onSettingsModalOpen();
-      }
-    }
-  }, [isAppInitialized, geminiConfigured, selectedModel, openRouterApiKey, toast]); // Restored isAppInitialized and geminiConfigured
-
-
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => { // This is the original, correct handleModelChange
     const model = e.target.value as 'gemini' | 'deepseek';
     setSelectedModel(model);
     setCurrentModel(model);
     if (model === 'deepseek' && !openRouterApiKey) {
       toast({
         title: "OpenRouter API Key Missing",
-        description: "Please configure your OpenRouter API key in settings to use DeepSeek models.",
+        description: "Please configure your OpenRouter API key in settings to use OpenRouter models.",
         status: "warning",
         duration: 5000,
         isClosable: true,
@@ -334,25 +283,9 @@ function App() {
       });
     }
 
-    toast({
-      title: 'Settings Saved',
-         toast({
-            title: "Switched to OpenRouter",
-            description: "Gemini is no longer configured. Switched to OpenRouter.",
-            status: "info",
-            isClosable: true,
-         });
-      } else {
-         toast({
-            title: "Gemini Not Configured",
-            description: "Gemini is no longer configured, and OpenRouter is also not set up. Please configure a model.",
-            status: "error",
-            isClosable: true,
-         });
-      }
-    }
-
-
+    // The duplicated toast logic for "Switched to OpenRouter" / "Gemini Not Configured"
+    // that was incorrectly here has been removed.
+    // The primary "Settings Saved" toast remains.
     toast({
       title: 'Settings Saved',
       description: 'OpenRouter configuration updated.',
@@ -364,7 +297,7 @@ function App() {
 
   // Document Management Functions using Services
   const addDocumentToStateAndStorage = (doc: FileDocument) => {
-    setDocuments(prevDocs => {
+    setDocuments((prevDocs: FileDocument[]) => { // Typed prevDocs
       const newDocs = [...prevDocs, doc];
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
       return newDocs;
@@ -372,8 +305,8 @@ function App() {
   };
 
   const updateDocumentInStateAndStorage = (docId: string, updates: Partial<FileDocument>) => {
-    setDocuments(prevDocs => {
-      const newDocs = prevDocs.map(d => d.id === docId ? { ...d, ...updates } : d);
+    setDocuments((prevDocs: FileDocument[]) => { // Typed prevDocs
+      const newDocs = prevDocs.map((d: FileDocument) => d.id === docId ? { ...d, ...updates } : d); // Typed d
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
       return newDocs;
     });
@@ -440,8 +373,8 @@ function App() {
 
   const deleteDocumentMetadata = (docId: string) => {
     vectorStoreServiceRef.current?.removeDocument(docId); // Use VectorStoreService
-    setDocuments(prevDocs => {
-      const newDocs = prevDocs.filter(d => d.id !== docId);
+    setDocuments((prevDocs: FileDocument[]) => { // Typed prevDocs
+      const newDocs = prevDocs.filter((d: FileDocument) => d.id !== docId); // Typed d
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
       return newDocs;
     });
@@ -449,7 +382,7 @@ function App() {
 
   // Calculate statistics
   const totalDocuments = documents.length;
-  const totalChunks = documents.reduce((acc, doc) => acc + (doc.processed && doc.numChunks ? doc.numChunks : 0), 0);
+  const totalChunks = documents.reduce((acc: number, doc: FileDocument) => acc + (doc.processed && doc.numChunks ? doc.numChunks : 0), 0); // Typed acc and doc
   const averageChunksPerDocument = totalDocuments > 0 ? parseFloat((totalChunks / totalDocuments).toFixed(1)) : 0;
 
 
@@ -594,6 +527,7 @@ function App() {
       </Box>
     </ChakraProvider>
   );
-}
+} // This is the closing brace for the App function
 
 export default App;
+// Removed extraneous closing brace that might have been at the very end of the file

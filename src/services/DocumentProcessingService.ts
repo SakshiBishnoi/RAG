@@ -110,38 +110,37 @@ export class DocumentProcessingService {
 
     if (sentences.length > 0) {
         try {
-            await tf.tidy(async () => {
-                const sentenceEmbeddingsTensor = await this.sentenceEncoder.embed(sentences);
-                const sentenceEmbeddings = await sentenceEmbeddingsTensor.array() as number[][];
-                tf.dispose(sentenceEmbeddingsTensor);
+            // Removed tf.tidy() wrapper for the async block
+            const sentenceEmbeddingsTensor = await this.sentenceEncoder.embed(sentences);
+            const sentenceEmbeddings = await sentenceEmbeddingsTensor.array() as number[][];
+            tf.dispose(sentenceEmbeddingsTensor); // Explicit dispose
 
-                const SIMILARITY_THRESHOLD = 0.4;
-                let currentChunkSentences: string[] = [];
+            const SIMILARITY_THRESHOLD = 0.4;
+            let currentChunkSentences: string[] = [];
 
-                for (let i = 0; i < sentences.length; i++) {
-                    currentChunkSentences.push(sentences[i]);
-                    // Check similarity with the NEXT sentence to decide if current sentence is the end of a chunk
-                    if (i < sentences.length - 1) {
-                        const similarity = calculateCosineSimilarity(sentenceEmbeddings[i], sentenceEmbeddings[i + 1]);
-                        if (similarity < SIMILARITY_THRESHOLD) {
-                            finalChunks.push(currentChunkSentences.join(' ').trim());
-                            currentChunkSentences = []; // Reset for the next chunk
-                        }
+            for (let i = 0; i < sentences.length; i++) {
+                currentChunkSentences.push(sentences[i]);
+                // Check similarity with the NEXT sentence to decide if current sentence is the end of a chunk
+                if (i < sentences.length - 1) {
+                    const similarity = calculateCosineSimilarity(sentenceEmbeddings[i], sentenceEmbeddings[i + 1]);
+                    if (similarity < SIMILARITY_THRESHOLD) {
+                        finalChunks.push(currentChunkSentences.join(' ').trim());
+                        currentChunkSentences = []; // Reset for the next chunk
                     }
                 }
-                // Add the last chunk
-                if (currentChunkSentences.length > 0) {
-                    finalChunks.push(currentChunkSentences.join(' ').trim());
-                }
+            }
+            // Add the last chunk
+            if (currentChunkSentences.length > 0) {
+                finalChunks.push(currentChunkSentences.join(' ').trim());
+            }
 
-                if (finalChunks.length > 0) {
-                    const finalChunkEmbeddingsTensor = await this.sentenceEncoder.embed(finalChunks);
-                    const embeddingsArray = await finalChunkEmbeddingsTensor.array() as number[][];
-                    finalChunkEmbeddings.push(...embeddingsArray);
-                    tf.dispose(finalChunkEmbeddingsTensor);
-                    finalChunks.forEach(chunk => chunkSizes.push(chunk.length));
-                }
-            }); // end tf.tidy
+            if (finalChunks.length > 0) {
+                const finalChunkEmbeddingsTensor = await this.sentenceEncoder.embed(finalChunks);
+                const embeddingsArray = await finalChunkEmbeddingsTensor.array() as number[][];
+                finalChunkEmbeddings.push(...embeddingsArray);
+                tf.dispose(finalChunkEmbeddingsTensor); // Explicit dispose
+                finalChunks.forEach(chunk => chunkSizes.push(chunk.length));
+            }
         } catch (embeddingError: any) {
             console.error(`Error during semantic chunking or embedding for ${docName}:`, embeddingError);
             processingErrors.push(`Semantic chunking/embedding failed: ${embeddingError.message || 'Unknown embedding error'}`);
