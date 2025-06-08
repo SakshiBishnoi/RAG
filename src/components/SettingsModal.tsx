@@ -13,6 +13,8 @@ import {
   Button,
   VStack,
   useToast,
+  Text, // Added Text import
+  Link, // Added Link import
 } from '@chakra-ui/react';
 
 interface SettingsModalProps {
@@ -95,7 +97,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 fontSize="sm"
               />
               <Text fontSize="xs" color="gray.500" mt={1}>
-                Find model strings on the <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" style={{textDecoration: 'underline'}}>OpenRouter models page</a>.
+                Find model strings on the{' '}
+                <Link href="https://openrouter.ai/models" isExternal style={{ textDecoration: 'underline' }} color="blue.500">
+                  OpenRouter models page
+                </Link>
+                .
               </Text>
             </FormControl>
           </VStack>

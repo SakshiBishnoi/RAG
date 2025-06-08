@@ -200,12 +200,16 @@ const DocumentList: React.FC<DocumentListProps> = ({ documents, onDeleteDocument
                     documents.slice(index + 1).map(doc2 => {
                       let similarity = 0;
                       if (doc1.previewContent && doc2.previewContent) {
-                        // Simple content similarity check on previewContent
-                        similarity = doc1.previewContent.split(' ')
-                          .filter(word => doc2.previewContent && doc2.previewContent.includes(word)).length;
+                        // Refined similarity: count common words (case-insensitive)
+                        const words1 = doc1.previewContent.toLowerCase().match(/\b(\w+)\b/g) || [];
+                        const words2 = new Set(doc2.previewContent.toLowerCase().match(/\b(\w+)\b/g) || []);
+                        if (words1.length > 0 && words2.size > 0) {
+                            similarity = words1.filter(word => words2.has(word)).length;
+                        }
                       }
                       
-                      if (similarity > 5) { // Adjusted threshold for preview
+                      const similarityThreshold = 5; // Keep existing threshold
+                      if (similarity > similarityThreshold) {
                         return {
                           from: doc1.id,
                           to: doc2.id,
@@ -213,8 +217,8 @@ const DocumentList: React.FC<DocumentListProps> = ({ documents, onDeleteDocument
                         };
                       }
                       return null; // Return null for no edge
-                    }).filter(Boolean) // Filter out nulls
-                  )
+                    }).filter(edge => edge !== null) // Explicitly filter out nulls
+                  ) as { from: string; to: string; label?: string }[] // Type assertion for clarity
                 }}
               />
             </Box>

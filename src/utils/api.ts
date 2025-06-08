@@ -25,9 +25,9 @@ if (process.env.REACT_APP_GEMINI_API_KEY) { // Check only for Gemini key, OpenRo
   });
 }
 */
-}
+// Removed extraneous closing brace that was here
 
-import { RelevantChunk } from './documentProcessor'; // Import RelevantChunk
+import { RelevantChunk } from '../services/VectorStoreService'; // Updated import path
 
 interface GenerateResponseParams {
   message: string;
@@ -246,5 +246,43 @@ export async function compressChunkWithLLM(
   } catch (error) {
     console.error(`Error during contextual compression for chunk (ID: ${chunk.docId}, Index: ${chunk.chunkIndex}):`, error);
     return null; // Signify compression failed for this chunk
+  }
+}
+
+export async function generateDocumentSummary(
+  fullText: string,
+  modelType: 'gemini' | 'deepseek'
+): Promise<string> {
+  if (!fullText || fullText.trim() === "") {
+    return "Document has no content to summarize.";
+  }
+  // Truncate fullText if too long for a summary prompt, though LLMs should handle large contexts.
+  // For client-side, be mindful of token limits for the prompt itself if not for context window.
+  const maxPromptLength = 15000; // Arbitrary limit for the prompt text around the main content
+  const contentForSummary = fullText.length > maxPromptLength
+    ? `${fullText.substring(0, maxPromptLength)}... (content truncated for summary prompt)`
+    : fullText;
+
+  const prompt = `Please provide a concise summary (around 3-5 sentences) of the following document content:\n\n"${contentForSummary}"`;
+
+  try {
+    if (modelType === 'gemini') {
+      if (!isGeminiConfigured()) {
+        throw new Error("Gemini client not configured. Cannot generate summary.");
+      }
+      const gemini = getGeminiClient();
+      const model = gemini.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Flash is good for summarization
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    } else if (modelType === 'deepseek') {
+      return (await generateWithOpenRouter([{ type: 'user', content: prompt }])).trim();
+    } else {
+      throw new Error(`Unsupported model type for summary generation: ${modelType}`);
+    }
+  } catch (error) {
+    console.error('Error generating document summary:', error);
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate summary due to an unexpected error.";
+    // Return a more specific error message or the error itself if preferred by the caller
+    throw new Error(`Summary generation failed: ${errorMessage}`);
   }
 }

@@ -1,15 +1,32 @@
 import React, { useState, useEffect } from 'react';
-import { ChakraProvider, Box, Container, extendTheme, Text, Select } from '@chakra-ui/react';
-import { ChakraProvider, Box, Container, extendTheme, Text, Select, IconButton, HStack, useDisclosure, useToast } from '@chakra-ui/react'; // Added IconButton, HStack, useDisclosure, useToast
+import {
+  ChakraProvider,
+  Box,
+  Container,
+  extendTheme,
+  Text,
+  Select,
+  IconButton,
+  HStack,
+  VStack, // Added VStack
+  useDisclosure,
+  useToast
+} from '@chakra-ui/react';
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
 import SettingsModal from './components/SettingsModal'; // Import SettingsModal
 import { SettingsIcon } from '@chakra-ui/icons'; // Import SettingsIcon
 
-import { clearDocumentFromInMemoryStore } from './utils/documentProcessor'; // For deletion
-import { setCurrentModel, getCurrentModel, initializeModels, isGeminiConfigured } from './utils/modelConfig'; // Import isGeminiConfigured
-// Define FileDocument interface, similar to DocumentUpload.tsx's local one
+// Remove direct imports from documentProcessor if they are no longer used by App.tsx directly
+import { loadModel as loadSentenceEncoderModel } from './utils/documentProcessor'; // Keep this for loading the model
+import { setCurrentModel, getCurrentModel, initializeModels, isGeminiConfigured } from './utils/modelConfig';
+import { VectorStoreService } from './services/VectorStoreService';
+import { DocumentProcessingService } from './services/DocumentProcessingService';
+import * as use from '@tensorflow-models/universal-sentence-encoder';
+import { generateDocumentSummary } from './utils/api'; // Import for summary generation
+
+// Define FileDocument interface, should align with what App needs to store
 export interface FileDocument {
   id: string;
   name: string;
@@ -21,8 +38,10 @@ export interface FileDocument {
   numChunks?: number;
   previewContent?: string;
   fullTextLength?: number;
-  processingErrors?: string[]; // Added to reflect processing errors
-  // content: string; // This was in DocumentUpload's tempDoc, ensure consistency or handle if needed
+  processingErrors?: string[];
+  processingTimeMs?: number; // Added from service output
+  // Summary will be added later by a separate process
+  // totalSentences is in metadata from service, can add here if needed for UI
 }
 
 const theme = extendTheme({
@@ -101,14 +120,109 @@ function App() {
 
   // State for OpenRouter settings
   const [openRouterApiKey, setOpenRouterApiKey] = useState<string>('');
-  const [openRouterModelString, setOpenRouterModelString] = useState<string>('meta-llama/llama-3-8b-instruct'); // Default model
+  const [openRouterModelString, setOpenRouterModelString] = useState<string>('meta-llama/llama-3-8b-instruct');
 
-  // State for Gemini configuration status
-  const [geminiConfigured, setGeminiConfigured] = useState<boolean>(true); // Assume configured until checked
+  const [geminiConfigured, setGeminiConfigured] = useState<boolean>(true);
 
-  // Load documents and settings from localStorage on initial mount
+  // Refs for services and model
+  const vectorStoreServiceRef = useRef<VectorStoreService | null>(null);
+  const documentProcessingServiceRef = useRef<DocumentProcessingService | null>(null);
+  const sentenceEncoderModelRef = useRef<use.UniversalSentenceEncoder | null>(null);
+
+  const [isAppInitialized, setIsAppInitialized] = useState<boolean>(false);
+  const [appInitError, setAppInitError] = useState<string | null>(null);
+
+
+  // Initialize services and load settings on mount
   useEffect(() => {
-    const storedDocs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]') as FileDocument[];
+    async function initializeApp() {
+      try {
+        // 1. Load Sentence Encoder Model
+        const model = await loadSentenceEncoderModel();
+        sentenceEncoderModelRef.current = model;
+
+        // 2. Instantiate VectorStoreService
+        vectorStoreServiceRef.current = new VectorStoreService();
+
+        // 3. Instantiate DocumentProcessingService with dependencies
+        if (sentenceEncoderModelRef.current && vectorStoreServiceRef.current) {
+          documentProcessingServiceRef.current = new DocumentProcessingService(
+            vectorStoreServiceRef.current,
+            sentenceEncoderModelRef.current
+          );
+        } else {
+          throw new Error("Sentence encoder or vector store failed to initialize.");
+        }
+
+        // Load settings from localStorage
+        const storedApiKey = localStorage.getItem('openRouterApiKey');
+        if (storedApiKey) setOpenRouterApiKey(storedApiKey);
+        const storedModelString = localStorage.getItem('openRouterModelString');
+        if (storedModelString) setOpenRouterModelString(storedModelString);
+
+        // Initialize LLM clients via modelConfig
+        initializeModels({
+          geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '',
+          userProvidedOpenRouterApiKey: storedApiKey || '',
+          envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '',
+          userProvidedOpenRouterModel: storedModelString || undefined,
+          siteUrl: window.location.href,
+          siteName: 'RAG Application Demo',
+        });
+
+        setGeminiConfigured(isGeminiConfigured());
+
+        // Load document metadata from localStorage AFTER services are ready
+        const storedDocs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]') as FileDocument[];
+        setDocuments(storedDocs);
+
+        // Re-populate VectorStore with data from localStorage (if any persisted docs)
+        // This assumes FileDocument contains enough info to reconstruct, or we store chunks/embeddings separately
+        // For now, we only store metadata. If chunks/embeddings were persisted, this is where they'd be reloaded.
+        // Given current VectorStoreService is in-memory only, this step is more about future-proofing
+        // if we decided to persist vector data. For now, it will be empty on refresh.
+
+        setAppInitError(null);
+      } catch (error: any) {
+        console.error("Failed to initialize application services:", error);
+        setAppInitError(`Failed to load embedding model or init services: ${error.message}`);
+      } finally {
+        setIsAppInitialized(true);
+      }
+    }
+    initializeApp();
+  }, []); // Empty dependency array, runs once on mount
+
+  // Effect to handle model switching if Gemini is not configured
+  useEffect(() => {
+    if (!isAppInitialized) return; // Run only after initial setup
+
+    if (!geminiConfigured && selectedModel === 'gemini') {
+      if (openRouterApiKey && openRouterApiKey.trim() !== '') {
+        setSelectedModel('deepseek');
+        setCurrentModel('deepseek');
+        toast({
+          title: "Gemini Not Configured",
+          description: "Gemini API key is missing. Switched to OpenRouter as it is configured.",
+          status: "warning",
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: "No Models Configured",
+          description: "Neither Gemini nor OpenRouter is configured. Please set API keys in Settings or environment variables.",
+          status: "error",
+          duration: 7000,
+          isClosable: true,
+        });
+      }
+    }
+  }, [isAppInitialized, geminiConfigured, selectedModel, openRouterApiKey, toast]);
+
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const model = e.target.value as 'gemini' | 'deepseek';
     setDocuments(storedDocs);
 
     const storedApiKey = localStorage.getItem('openRouterApiKey');
@@ -156,7 +270,8 @@ function App() {
         // Optionally, open settings modal here too: onSettingsModalOpen();
       }
     }
-  }, [selectedModel, openRouterApiKey, toast]); // Add selectedModel, openRouterApiKey, toast to dependency array
+  }, [isAppInitialized, geminiConfigured, selectedModel, openRouterApiKey, toast]); // Restored isAppInitialized and geminiConfigured
+
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value as 'gemini' | 'deepseek';
@@ -180,25 +295,47 @@ function App() {
     localStorage.setItem('openRouterApiKey', apiKey);
     localStorage.setItem('openRouterModelString', modelString);
 
-    // Re-initialize models with the new key/settings
-    // This is crucial if the user updates the key for OpenRouter (DeepSeek)
-    initializeModels({
-      geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '',
-      userProvidedOpenRouterApiKey: apiKey, // The new key from settings
-      envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '',
-      userProvidedOpenRouterModel: modelString, // The new model from settings
-      siteUrl: window.location.href,
-      siteName: 'RAG Application Demo',
-    });
+    if (documentProcessingServiceRef.current) { // Ensure services are initialized
+      initializeModels({ // Re-initialize LLM clients
+        geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '',
+        userProvidedOpenRouterApiKey: apiKey,
+        envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '',
+        userProvidedOpenRouterModel: modelString,
+        siteUrl: window.location.href,
+        siteName: 'RAG Application Demo',
+      });
+      setGeminiConfigured(isGeminiConfigured());
 
-    // Update configuration status after saving
-    setGeminiConfigured(isGeminiConfigured());
+      if (!isGeminiConfigured() && getCurrentModel() === 'gemini') {
+        if (apiKey && apiKey.trim() !== '') {
+          setSelectedModel('deepseek');
+          setCurrentModel('deepseek');
+          toast({
+              title: "Switched to OpenRouter",
+              description: "Gemini is no longer configured. Switched to OpenRouter.",
+              status: "info",
+              isClosable: true,
+          });
+        } else {
+          toast({
+              title: "Gemini Not Configured",
+              description: "Gemini is no longer configured, and OpenRouter is also not set up. Please configure a model.",
+              status: "error",
+              isClosable: true,
+          });
+        }
+      }
+    } else {
+      toast({
+        title: "Error",
+        description: "Services not initialized. Cannot save settings.",
+        status: "error",
+        isClosable: true,
+      });
+    }
 
-    // If Gemini was selected but is not configured after save (e.g. key removed), and OpenRouter is, switch.
-    if (!isGeminiConfigured() && getCurrentModel() === 'gemini') {
-      if (apiKey && apiKey.trim() !== '') { // Use the apiKey from the save handler
-         setSelectedModel('deepseek');
-         setCurrentModel('deepseek');
+    toast({
+      title: 'Settings Saved',
          toast({
             title: "Switched to OpenRouter",
             description: "Gemini is no longer configured. Switched to OpenRouter.",
@@ -225,8 +362,8 @@ function App() {
     });
   };
 
-  // Functions to manage document metadata
-  const addDocumentMetadata = (doc: FileDocument) => {
+  // Document Management Functions using Services
+  const addDocumentToStateAndStorage = (doc: FileDocument) => {
     setDocuments(prevDocs => {
       const newDocs = [...prevDocs, doc];
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
@@ -234,7 +371,7 @@ function App() {
     });
   };
 
-  const updateDocumentMetadata = (docId: string, updates: Partial<FileDocument>) => {
+  const updateDocumentInStateAndStorage = (docId: string, updates: Partial<FileDocument>) => {
     setDocuments(prevDocs => {
       const newDocs = prevDocs.map(d => d.id === docId ? { ...d, ...updates } : d);
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
@@ -242,8 +379,67 @@ function App() {
     });
   };
 
+  // This function is passed to DocumentUpload as onProcessFile
+  const handleProcessNewFile = async (file: File, tempDocId: string) => {
+    if (!documentProcessingServiceRef.current) {
+      toast({ title: "Error", description: "Document processing service not ready.", status: "error" });
+      updateDocumentInStateAndStorage(tempDocId, { processed: false, processingErrors: ["Processing service not available."] });
+      return;
+    }
+    try {
+      const result = await documentProcessingServiceRef.current.processPDF(file, tempDocId, file.name);
+
+      // Update the document metadata with results from processing
+      // The ID change from tempDocId to result.id (if different) is handled by processPDF returning the final ID
+      // For this refactor, we assume tempDocId is the final ID used for storage in VectorStore.
+      // If processPDF generates a new ID, that new ID must be used to update the metadata.
+      // Let's assume processPDF uses the passed docId.
+      updateDocumentInStateAndStorage(tempDocId, {
+        processed: result.processingErrors && result.processingErrors.length > 0 ? false : true,
+        numChunks: result.numChunks,
+        processingErrors: result.processingErrors,
+        processingTimeMs: result.processingTimeMs,
+        // Generate preview from fullText returned by service
+        previewContent: result.fullText.substring(0, 1000),
+        fullTextLength: result.fullText.length,
+        // Summary will be handled separately
+      });
+
+      if (result.processingErrors && result.processingErrors.length > 0) {
+         toast({ title: "Processing Issue", description: `Document processed with errors: ${result.processingErrors.join(', ')}`, status: "warning", duration: 7000, isClosable: true });
+      } else {
+         toast({ title: "Processing Complete", description: `${file.name} processed successfully.`, status: "success" });
+      }
+
+      // Attempt to generate summary if processing was generally successful (even with minor page errors)
+      // and fullText was extracted.
+      if (result.fullText && result.fullText.trim().length > 0) {
+        try {
+          // Use the currently selected model in App.tsx for summary generation
+          const summary = await generateDocumentSummary(result.fullText, selectedModel);
+          updateDocumentInStateAndStorage(tempDocId, { summary });
+        } catch (summaryError: any) {
+          console.error(`Failed to generate summary for ${file.name}:`, summaryError);
+          updateDocumentInStateAndStorage(tempDocId, {
+            summary: "Summary generation failed.",
+            processingErrors: [...(result.processingErrors || []), `Summary generation failed: ${summaryError.message}`]
+          });
+          toast({ title: "Summary Failed", description: `Could not generate summary for ${file.name}.`, status: "warning" });
+        }
+      } else if (!result.fullText || result.fullText.trim().length === 0) {
+        updateDocumentInStateAndStorage(tempDocId, { summary: "No content to summarize." });
+      }
+
+    } catch (error: any) {
+      console.error("Error processing file in App.tsx:", error);
+      updateDocumentInStateAndStorage(tempDocId, { processed: false, processingErrors: [error.message || "Unknown processing error"] });
+      toast({ title: "Processing Failed", description: `Error processing ${file.name}: ${error.message}`, status: "error" });
+    }
+  };
+
+
   const deleteDocumentMetadata = (docId: string) => {
-    clearDocumentFromInMemoryStore(docId); // Clear from in-memory stores
+    vectorStoreServiceRef.current?.removeDocument(docId); // Use VectorStoreService
     setDocuments(prevDocs => {
       const newDocs = prevDocs.filter(d => d.id !== docId);
       localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
@@ -309,8 +505,9 @@ function App() {
             >
               <DocumentUpload
                 allDocuments={documents}
-                onAddDocument={addDocumentMetadata}
-                onUpdateDocument={updateDocumentMetadata}
+                onAddInitialDoc={addDocumentToStateAndStorage} // For adding tempDoc
+                onProcessFile={handleProcessNewFile} // For actual processing
+                // onUpdateDocument is now implicitly handled by onProcessFile updating the state
               />
             </Box>
             <Box
@@ -377,7 +574,13 @@ function App() {
               bg="white"
               shadow="sm"
             >
-              <ChatInterface documents={documents} currentLLMModel={selectedModel} />
+              <ChatInterface
+                documents={documents}
+                currentLLMModel={selectedModel}
+                vectorStore={vectorStoreServiceRef.current}
+                sentenceEncoder={sentenceEncoderModelRef.current}
+                isAppInitialized={isAppInitialized}
+              />
             </Box>
           </Box>
         </Container>

@@ -14,11 +14,13 @@ import {
 } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
-import { generateResponse, generateHypotheticalDocument, rerankChunksWithLLM, compressChunkWithLLM } from '../utils/api'; // Import compressChunkWithLLM
-import { retrieveRelevantChunks, RelevantChunk, loadModel as loadSentenceEncoder } from '../utils/documentProcessor'; // Import loadModel as loadSentenceEncoder
-import { FileDocument } from '../App'; // Import FileDocument from App
+import { generateResponse, generateHypotheticalDocument, rerankChunksWithLLM, compressChunkWithLLM } from '../utils/api';
+// retrieveRelevantChunks and loadSentenceEncoder will now come from props via services
+import { RelevantChunk } from '../services/VectorStoreService'; // Updated import path for RelevantChunk
+import { FileDocument } from '../App';
 import ReactMarkdown from 'react-markdown';
-// import * as use from '@tensorflow-models/universal-sentence-encoder'; // Not strictly needed for direct usage here
+import { VectorStoreService } from '../services/VectorStoreService'; // Import service
+import * as use from '@tensorflow-models/universal-sentence-encoder'; // For sentenceEncoder prop type
 
 const MotionBox = motion(Box);
 
@@ -32,11 +34,20 @@ interface Message {
 }
 
 interface ChatInterfaceProps {
-  documents: FileDocument[]; // Documents passed from App.tsx
-  currentLLMModel: 'gemini' | 'deepseek'; // Added prop for current selected LLM
+  documents: FileDocument[];
+  currentLLMModel: 'gemini' | 'deepseek';
+  vectorStore: VectorStoreService | null;
+  sentenceEncoder: use.UniversalSentenceEncoder | null;
+  isAppInitialized: boolean;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadata, currentLLMModel }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({
+  documents: allDocsMetadata,
+  currentLLMModel,
+  vectorStore,
+  sentenceEncoder,
+  isAppInitialized
+}) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false); // General loading for LLM response
@@ -70,7 +81,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
       setInputValue('');
 
       let queryForRetrieval: string | number[] = userMessage.content;
-      let chunksForResponse: RelevantChunk[] = [];
+      let chunksForResponse: RelevantChunk[] = []; // Holds chunks after re-ranking
+      let finalContextChunks: RelevantChunk[] = []; // Holds chunks after compression, passed to generateResponse
 
       if (isDocumentChat) {
         const activeDocIds = allDocsMetadata.filter(doc => doc.processed).map(doc => doc.id);
@@ -91,18 +103,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
         // HyDE Step
         setIsGeneratingHyDE(true);
         try {
-          const hypotheticalDocument = await generateHypotheticalDocument(userMessage.content, currentLLMModel); // Use prop
+          if (!sentenceEncoder) {
+            throw new Error("Sentence encoder not available for HyDE.");
+          }
+          const hypotheticalDocument = await generateHypotheticalDocument(userMessage.content, currentLLMModel);
 
           if (hypotheticalDocument) {
-            const sentenceEncoder = await loadSentenceEncoder();
-            if (sentenceEncoder) {
-              const hydeEmbeddingTensor = await sentenceEncoder.embed(hypotheticalDocument);
-              queryForRetrieval = Array.from(await hydeEmbeddingTensor.dataSync());
-              hydeEmbeddingTensor.dispose();
-              console.log("HyDE: Used hypothetical document embedding for retrieval.");
-            } else {
-               throw new Error("Failed to load sentence encoder for HyDE.");
-            }
+            const hydeEmbeddingTensor = await sentenceEncoder.embed(hypotheticalDocument);
+            queryForRetrieval = Array.from(await hydeEmbeddingTensor.dataSync());
+            hydeEmbeddingTensor.dispose();
+            console.log("HyDE: Used hypothetical document embedding for retrieval.");
           }
         } catch (hydeError) {
           console.warn("HyDE generation or embedding failed, falling back to original query:", hydeError);
@@ -119,7 +129,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
         }
         // End of HyDE Step
 
-        let retrievedChunks = await retrieveRelevantChunks(queryForRetrieval, activeDocIds, allDocsMetadata, 15); // Increased topK to 15
+        if (!vectorStore) {
+          throw new Error("Vector store not available for chunk retrieval.");
+        }
+        let retrievedChunks = await vectorStore.retrieveRelevantChunks(queryForRetrieval, activeDocIds, 15);
 
         if (retrievedChunks.length > 0) {
           setIsReranking(true);
@@ -161,7 +174,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
         }
 
         // Contextual Compression Step
-        let finalContextChunks: RelevantChunk[] = [];
+        // finalContextChunks is already declared in the outer scope
         if (chunksForResponse.length > 0) {
           setIsCompressing(true);
           try {
@@ -225,12 +238,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
       }
       // End of isDocumentChat specific logic for retrieval
 
-      // This part will be restructured in the next step to correctly call generateResponse
-      // for both document and general chat modes.
+      // General call to generateResponse, works for both document and general chat modes
+      // as finalContextChunks will be empty if not isDocumentChat or if no chunks were found/kept.
       const response = await generateResponse({
         message: userMessage.content,
         isDocumentMode: isDocumentChat,
-        relevantChunks: finalContextChunks, // Use final (potentially compressed) chunks
+        relevantChunks: finalContextChunks, // Use final (potentially compressed) chunks, will be [] if not doc chat
         previousMessages: messages.filter(msg => msg.timestamp !== userMessage.timestamp),
         analyzeSummary: true,
         extractKeyPoints: true,
@@ -254,7 +267,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
       setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
     } finally {
       setIsLoading(false);
-      setIsGeneratingHyDE(false); // Ensure HyDE loading is also reset in finally
+      setIsGeneratingHyDE(false);
+      setIsReranking(false);    // Ensure all loading states are reset
+      setIsCompressing(false);  // Ensure all loading states are reset
     }
   };
 
@@ -363,9 +378,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
             colorScheme="blue"
             size={{ base: 'sm', md: 'md' }}
             px={6}
-            isLoading={isLoading}
+            isLoading={isLoading || !isAppInitialized || isGeneratingHyDE || isReranking || isCompressing} // More comprehensive isLoading
+            disabled={!isAppInitialized} // Disable if app isn't ready
           >
-            Send
+            {isAppInitialized ? 'Send' : 'Initializing...'}
           </Button>
         </HStack>
       </Box>
