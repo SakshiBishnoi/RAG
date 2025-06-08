@@ -1,20 +1,30 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
-  getCurrentModel,
+  getCurrentModel, // Keep one
   getGeminiClient,
   getOpenRouterClient,
-  generateWithDeepseek,
-  initializeModels
+  generateWithOpenRouter, // Updated import
+  initializeModels,
+  isGeminiConfigured // Added import for isGeminiConfigured
 } from './modelConfig';
 
 // Initialize models when the app starts
-if (process.env.REACT_APP_GEMINI_API_KEY && process.env.REACT_APP_OPENROUTER_API_KEY) {
+// App.tsx now handles initial loading of keys from localStorage and calls initializeModels
+// So, this specific initialization might be redundant or could be simplified
+// For now, let's ensure it uses the new signature if it remains.
+// However, the more robust approach is that App.tsx is the sole caller of initializeModels after fetching all key sources.
+// Let's comment this out from api.ts to avoid conflict and ensure App.tsx is the source of truth for initialization.
+/*
+if (process.env.REACT_APP_GEMINI_API_KEY) { // Check only for Gemini key, OpenRouter keys are optional
   initializeModels({
     geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY,
-    openRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY,
+    envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY, // Pass env key
+    // userProvidedOpenRouterApiKey and userProvidedOpenRouterModel will be undefined here initially
     siteUrl: window.location.href,
     siteName: 'RAG Application'
   });
+}
+*/
 }
 
 import { RelevantChunk } from './documentProcessor'; // Import RelevantChunk
@@ -36,15 +46,18 @@ export async function generateResponse({
 }: GenerateResponseParams): Promise<string> {
   const currentModel = getCurrentModel();
   
-  if (currentModel === 'deepseek') {
-    const messages = previousMessages.concat([{
-      type: 'user',
-      content: message
-    }]);
-    return generateWithDeepseek(messages);
-  }
+  try { // General try-catch for all generation paths
+    const currentModel = getCurrentModel();
 
-  try {
+    if (currentModel === 'deepseek') {
+      const messages = previousMessages.concat([{
+        type: 'user',
+        content: message
+      }]);
+      return await generateWithOpenRouter(messages); // Added await and ensure it's caught by try-catch
+    }
+
+    // Gemini Path
     const model = getGeminiClient().getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
     // Include conversation history for context
@@ -101,8 +114,137 @@ Please provide a response that:
     const result = await model.generateContent(prompt);
     const response = result.response;
     return response.text();
+
   } catch (error) {
-    console.error('Error generating response:', error);
-    throw new Error(error instanceof Error ? error.message : 'Failed to generate response');
+    console.error('Error generating response in api.ts:', error);
+    // The error message from getOpenRouterClient() is already user-friendly if that's the source.
+    // For other potential errors (network, Gemini client issues), this re-throw is appropriate.
+    throw new Error(error instanceof Error ? error.message : 'Failed to generate response due to an unexpected error.');
+  }
+}
+
+export async function generateHypotheticalDocument(
+  query: string,
+  modelType: 'gemini' | 'deepseek' // Matches ModelType in modelConfig
+): Promise<string> {
+  const prompt = `Based on the following user question, please generate a concise, ideal document passage that directly answers the question. The passage should be well-structured, factual, and as if it's from a relevant document that would perfectly answer the query. Do not include any conversational fluff or preamble like "Here is a passage...". Just provide the passage itself. Question: '${query}'`;
+
+  try {
+    if (modelType === 'gemini') {
+      if (!isGeminiConfigured()) { // Check if Gemini is configured
+        throw new Error("Gemini client not configured. Cannot generate hypothetical document.");
+      }
+      const gemini = getGeminiClient();
+      // Using a model known for instruction following, though flash might also work.
+      // Consider making this model configurable or using a specific one for HyDE.
+      const model = gemini.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+      const result = await model.generateContent(prompt);
+      return result.response.text();
+    } else if (modelType === 'deepseek') {
+      // generateWithOpenRouter already checks if client is initialized
+      return await generateWithOpenRouter([{ type: 'user', content: prompt }]);
+    } else {
+      throw new Error(`Unsupported model type for HyDE: ${modelType}`);
+    }
+  } catch (error) {
+    console.error('Error generating hypothetical document:', error);
+    // Prepend HyDE specific context to the error message
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate hypothetical document due to an unexpected error.";
+    throw new Error(`HyDE generation failed: ${errorMessage}`);
+  }
+}
+
+export async function rerankChunksWithLLM(
+  originalQuery: string,
+  chunks: RelevantChunk[],
+  modelType: 'gemini' | 'deepseek', // Matches ModelType in modelConfig
+  targetCount: number
+): Promise<RelevantChunk[]> {
+  if (!chunks || chunks.length === 0) {
+    return [];
+  }
+
+  const assessmentPromises = chunks.map(async (chunk, index) => {
+    const prompt = `User Query: '${originalQuery}'\n\nDocument Chunk:\n'${chunk.text}'\n\nIs this document chunk highly relevant to the User Query? Respond with only 'YES' or 'NO'.`;
+    let isRelevant = false;
+
+    try {
+      let responseText = '';
+      if (modelType === 'gemini') {
+        if (!isGeminiConfigured()) {
+          console.warn("Gemini client not configured. Cannot use for re-ranking, marking chunk as not relevant.");
+          // Fallback: treat as not relevant if the required model is not configured
+          return { chunk, isRelevant: false, originalIndex: index };
+        }
+        const gemini = getGeminiClient();
+        const model = gemini.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Using flash for speed
+        const result = await model.generateContent(prompt);
+        responseText = result.response.text().trim().toUpperCase();
+      } else if (modelType === 'deepseek') {
+        // generateWithOpenRouter will throw if client not configured, caught by outer try-catch
+        responseText = (await generateWithOpenRouter([{ type: 'user', content: prompt }])).trim().toUpperCase();
+      } else {
+        console.warn(`Unsupported model type for re-ranking: ${modelType}, marking chunk as not relevant.`);
+        return { chunk, isRelevant: false, originalIndex: index };
+      }
+      isRelevant = responseText === 'YES';
+    } catch (error) {
+      console.error(`Error re-ranking chunk ${index} (Doc: ${chunk.docName}, ChunkIdx: ${chunk.chunkIndex}):`, error);
+      isRelevant = false; // Treat as not relevant on error
+    }
+    return { chunk, isRelevant, originalIndex: index };
+  });
+
+  const relevanceResults = await Promise.allSettled(assessmentPromises);
+
+  const relevantRankedChunks: RelevantChunk[] = [];
+  relevanceResults.forEach(result => {
+    if (result.status === 'fulfilled' && result.value.isRelevant) {
+      relevantRankedChunks.push(result.value.chunk);
+    } else if (result.status === 'rejected') {
+      console.error("A re-ranking promise was rejected:", result.reason);
+    }
+  });
+
+  // The chunks are already sorted by original similarity score from retrieveRelevantChunks.
+  // Filtering by 'YES' preserves this relative order.
+  return relevantRankedChunks.slice(0, targetCount);
+}
+
+export async function compressChunkWithLLM(
+  originalQuery: string,
+  chunk: RelevantChunk,
+  modelType: 'gemini' | 'deepseek' // Align with how currentLLMModel is typed
+): Promise<string | null> {
+  const prompt = `User Query: '${originalQuery}'\n\nDocument Chunk Text:\n'${chunk.text}'\n\nConsidering the User Query, extract only the sentences or key phrases from the Document Chunk Text that are essential and directly relevant to answering the User Query. If no part of the chunk text is relevant to the query, respond with the exact word "NONE". Otherwise, return only the extracted relevant text.`;
+  let compressedText: string = '';
+
+  try {
+    if (modelType === 'gemini') {
+      if (!isGeminiConfigured()) {
+        console.warn("Gemini client not configured. Cannot use for contextual compression.");
+        return null; // Graceful degradation
+      }
+      const gemini = getGeminiClient();
+      const model = gemini.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+      const result = await model.generateContent(prompt);
+      compressedText = result.response.text().trim();
+    } else if (modelType === 'deepseek') {
+      // Relies on generateWithOpenRouter to throw if OpenRouter client is not configured
+      compressedText = await generateWithOpenRouter([{ type: 'user', content: prompt }]);
+      compressedText = compressedText.trim(); // Ensure trimming
+    } else {
+      console.error(`Unsupported model type for contextual compression: ${modelType}`);
+      return null;
+    }
+
+    if (compressedText.toUpperCase() === 'NONE' || compressedText === '') {
+      return null; // No relevant information found or empty response
+    }
+    return compressedText; // Return the compressed/extracted text
+
+  } catch (error) {
+    console.error(`Error during contextual compression for chunk (ID: ${chunk.docId}, Index: ${chunk.chunkIndex}):`, error);
+    return null; // Signify compression failed for this chunk
   }
 }

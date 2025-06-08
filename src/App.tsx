@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { ChakraProvider, Box, Container, extendTheme, Text, Select } from '@chakra-ui/react';
+import { ChakraProvider, Box, Container, extendTheme, Text, Select, IconButton, HStack, useDisclosure, useToast } from '@chakra-ui/react'; // Added IconButton, HStack, useDisclosure, useToast
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
-// import { ProcessedDocument } from './utils/documentProcessor'; // Type from here is less relevant now for App's main state
-import { clearDocumentFromInMemoryStore } from './utils/documentProcessor'; // For deletion
-import { setCurrentModel, getCurrentModel } from './utils/modelConfig';
+import SettingsModal from './components/SettingsModal'; // Import SettingsModal
+import { SettingsIcon } from '@chakra-ui/icons'; // Import SettingsIcon
 
+import { clearDocumentFromInMemoryStore } from './utils/documentProcessor'; // For deletion
+import { setCurrentModel, getCurrentModel, initializeModels, isGeminiConfigured } from './utils/modelConfig'; // Import isGeminiConfigured
 // Define FileDocument interface, similar to DocumentUpload.tsx's local one
 export interface FileDocument {
   id: string;
@@ -92,18 +94,135 @@ const theme = extendTheme({
 
 function App() {
   const [documents, setDocuments] = useState<FileDocument[]>([]);
-  const [selectedModel, setSelectedModel] = useState<'gemini' | 'deepseek'>(getCurrentModel());
+  const initialDefaultModel = getCurrentModel(); // Default is 'gemini' from modelConfig
+  const [selectedModel, setSelectedModel] = useState<'gemini' | 'deepseek'>(initialDefaultModel);
+  const { isOpen: isSettingsModalOpen, onOpen: onSettingsModalOpen, onClose: onSettingsModalClose } = useDisclosure();
+  const toast = useToast();
 
-  // Load documents from localStorage on initial mount
+  // State for OpenRouter settings
+  const [openRouterApiKey, setOpenRouterApiKey] = useState<string>('');
+  const [openRouterModelString, setOpenRouterModelString] = useState<string>('meta-llama/llama-3-8b-instruct'); // Default model
+
+  // State for Gemini configuration status
+  const [geminiConfigured, setGeminiConfigured] = useState<boolean>(true); // Assume configured until checked
+
+  // Load documents and settings from localStorage on initial mount
   useEffect(() => {
     const storedDocs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]') as FileDocument[];
     setDocuments(storedDocs);
-  }, []);
+
+    const storedApiKey = localStorage.getItem('openRouterApiKey');
+    if (storedApiKey) setOpenRouterApiKey(storedApiKey);
+
+    const storedModelString = localStorage.getItem('openRouterModelString');
+    if (storedModelString) setOpenRouterModelString(storedModelString);
+
+    // Initialize models (especially if OpenRouter key might come from localStorage)
+    // This might need adjustment if DeepSeek is OpenRouter based and needs the key immediately
+    // For now, assume Gemini is default and OpenRouter (DeepSeek) can be configured.
+    // A more robust approach would be to initialize/re-initialize in handleSaveSettings.
+    // Initialize models with keys from .env and potentially from localStorage
+    initializeModels({
+      geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '', // Ensure it's always a string
+      userProvidedOpenRouterApiKey: storedApiKey || '', // Pass stored user key
+      envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '', // Pass env key as fallback
+      userProvidedOpenRouterModel: storedModelString || undefined, // Pass stored user model
+      siteUrl: window.location.href,
+      siteName: 'RAG Application Demo', // Example site name
+    });
+
+    const geminiIsReady = isGeminiConfigured();
+    setGeminiConfigured(geminiIsReady);
+
+    if (!geminiIsReady && selectedModel === 'gemini') {
+      if (openRouterApiKey && openRouterApiKey.trim() !== '') { // Check if OpenRouter is configured
+        setSelectedModel('deepseek');
+        setCurrentModel('deepseek');
+        toast({
+          title: "Gemini Not Configured",
+          description: "Gemini API key is missing. Switched to OpenRouter as it is configured.",
+          status: "warning",
+          duration: 5000,
+          isClosable: true,
+        });
+      } else {
+        toast({
+          title: "No Models Configured",
+          description: "Neither Gemini nor OpenRouter is configured. Please set API keys in Settings or environment variables.",
+          status: "error",
+          duration: 7000,
+          isClosable: true,
+        });
+        // Optionally, open settings modal here too: onSettingsModalOpen();
+      }
+    }
+  }, [selectedModel, openRouterApiKey, toast]); // Add selectedModel, openRouterApiKey, toast to dependency array
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value as 'gemini' | 'deepseek';
     setSelectedModel(model);
     setCurrentModel(model);
+    if (model === 'deepseek' && !openRouterApiKey) {
+      toast({
+        title: "OpenRouter API Key Missing",
+        description: "Please configure your OpenRouter API key in settings to use DeepSeek models.",
+        status: "warning",
+        duration: 5000,
+        isClosable: true,
+      });
+      onSettingsModalOpen(); // Prompt user to enter settings
+    }
+  };
+
+  const handleSaveSettings = (apiKey: string, modelString: string) => {
+    setOpenRouterApiKey(apiKey);
+    setOpenRouterModelString(modelString);
+    localStorage.setItem('openRouterApiKey', apiKey);
+    localStorage.setItem('openRouterModelString', modelString);
+
+    // Re-initialize models with the new key/settings
+    // This is crucial if the user updates the key for OpenRouter (DeepSeek)
+    initializeModels({
+      geminiApiKey: process.env.REACT_APP_GEMINI_API_KEY || '',
+      userProvidedOpenRouterApiKey: apiKey, // The new key from settings
+      envProvidedOpenRouterApiKey: process.env.REACT_APP_OPENROUTER_API_KEY || '',
+      userProvidedOpenRouterModel: modelString, // The new model from settings
+      siteUrl: window.location.href,
+      siteName: 'RAG Application Demo',
+    });
+
+    // Update configuration status after saving
+    setGeminiConfigured(isGeminiConfigured());
+
+    // If Gemini was selected but is not configured after save (e.g. key removed), and OpenRouter is, switch.
+    if (!isGeminiConfigured() && getCurrentModel() === 'gemini') {
+      if (apiKey && apiKey.trim() !== '') { // Use the apiKey from the save handler
+         setSelectedModel('deepseek');
+         setCurrentModel('deepseek');
+         toast({
+            title: "Switched to OpenRouter",
+            description: "Gemini is no longer configured. Switched to OpenRouter.",
+            status: "info",
+            isClosable: true,
+         });
+      } else {
+         toast({
+            title: "Gemini Not Configured",
+            description: "Gemini is no longer configured, and OpenRouter is also not set up. Please configure a model.",
+            status: "error",
+            isClosable: true,
+         });
+      }
+    }
+
+
+    toast({
+      title: 'Settings Saved',
+      description: 'OpenRouter configuration updated.',
+      status: 'success',
+      duration: 3000,
+      isClosable: true,
+    });
   };
 
   // Functions to manage document metadata
@@ -149,18 +268,31 @@ function App() {
           flexDirection="column"
           gap={3}
         >
-          <Box display="flex" justifyContent="flex-end" mb={2}>
+          <HStack justifyContent="flex-end" mb={0} spacing={2}>
             <Select 
               value={selectedModel} 
               onChange={handleModelChange}
               width="200px"
+              size="sm"
               bg="white"
               borderRadius="full"
+              boxShadow="sm"
             >
-              <option value="gemini">Gemini</option>
-              <option value="deepseek">Deepseek</option>
+              <option value="gemini" disabled={!geminiConfigured}>
+                Gemini Flash {geminiConfigured ? "" : "(Not Configured)"}
+              </option>
+              <option value="deepseek">OpenRouter</option>
             </Select>
-          </Box>
+            <IconButton
+              aria-label="Open Settings"
+              icon={<SettingsIcon />}
+              onClick={onSettingsModalOpen}
+              size="sm"
+              isRound
+              bg="white"
+              boxShadow="sm"
+            />
+          </HStack>
           <Box 
             display="grid"
             gridTemplateColumns={{
@@ -245,10 +377,17 @@ function App() {
               bg="white"
               shadow="sm"
             >
-              <ChatInterface documents={documents} />
+              <ChatInterface documents={documents} currentLLMModel={selectedModel} />
             </Box>
           </Box>
         </Container>
+        <SettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={onSettingsModalClose}
+          onSave={handleSaveSettings}
+          initialApiKey={openRouterApiKey}
+          initialModelString={openRouterModelString}
+        />
       </Box>
     </ChakraProvider>
   );

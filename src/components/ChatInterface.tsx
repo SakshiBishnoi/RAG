@@ -14,10 +14,11 @@ import {
 } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
-import { generateResponse } from '../utils/api';
-import { retrieveRelevantChunks, RelevantChunk } from '../utils/documentProcessor';
+import { generateResponse, generateHypotheticalDocument, rerankChunksWithLLM, compressChunkWithLLM } from '../utils/api'; // Import compressChunkWithLLM
+import { retrieveRelevantChunks, RelevantChunk, loadModel as loadSentenceEncoder } from '../utils/documentProcessor'; // Import loadModel as loadSentenceEncoder
 import { FileDocument } from '../App'; // Import FileDocument from App
 import ReactMarkdown from 'react-markdown';
+// import * as use from '@tensorflow-models/universal-sentence-encoder'; // Not strictly needed for direct usage here
 
 const MotionBox = motion(Box);
 
@@ -32,12 +33,16 @@ interface Message {
 
 interface ChatInterfaceProps {
   documents: FileDocument[]; // Documents passed from App.tsx
+  currentLLMModel: 'gemini' | 'deepseek'; // Added prop for current selected LLM
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadata }) => { // Renamed documents prop to allDocsMetadata for clarity
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadata, currentLLMModel }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // General loading for LLM response
+  const [isGeneratingHyDE, setIsGeneratingHyDE] = useState(false);
+  const [isReranking, setIsReranking] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false); // Specific loading for compression step
   const [isDocumentChat, setIsDocumentChat] = useState(true);
   const [showSummary, setShowSummary] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -64,9 +69,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
       setMessages(prev => [...prev, userMessage]);
       setInputValue('');
 
+      let queryForRetrieval: string | number[] = userMessage.content;
       let chunksForResponse: RelevantChunk[] = [];
+
       if (isDocumentChat) {
-        // Use allDocsMetadata from props
         const activeDocIds = allDocsMetadata.filter(doc => doc.processed).map(doc => doc.id);
 
         if (activeDocIds.length === 0) {
@@ -78,13 +84,135 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
             isClosable: true,
           });
           setIsLoading(false);
-          // Remove the user message if we're not proceeding
           setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
           return;
         }
-        chunksForResponse = await retrieveRelevantChunks(userMessage.content, activeDocIds, allDocsMetadata, 5);
 
-        if (chunksForResponse.length === 0) {
+        // HyDE Step
+        setIsGeneratingHyDE(true);
+        try {
+          const hypotheticalDocument = await generateHypotheticalDocument(userMessage.content, currentLLMModel); // Use prop
+
+          if (hypotheticalDocument) {
+            const sentenceEncoder = await loadSentenceEncoder();
+            if (sentenceEncoder) {
+              const hydeEmbeddingTensor = await sentenceEncoder.embed(hypotheticalDocument);
+              queryForRetrieval = Array.from(await hydeEmbeddingTensor.dataSync());
+              hydeEmbeddingTensor.dispose();
+              console.log("HyDE: Used hypothetical document embedding for retrieval.");
+            } else {
+               throw new Error("Failed to load sentence encoder for HyDE.");
+            }
+          }
+        } catch (hydeError) {
+          console.warn("HyDE generation or embedding failed, falling back to original query:", hydeError);
+          toast({
+            title: 'HyDE Enhancement Failed',
+            description: `Could not generate hypothetical document. Falling back to standard search. Error: ${hydeError instanceof Error ? hydeError.message : String(hydeError)}`,
+            status: 'warning',
+            duration: 4000,
+            isClosable: true,
+          });
+          // queryForRetrieval remains userMessage.content (original query)
+        } finally {
+          setIsGeneratingHyDE(false);
+        }
+        // End of HyDE Step
+
+        let retrievedChunks = await retrieveRelevantChunks(queryForRetrieval, activeDocIds, allDocsMetadata, 15); // Increased topK to 15
+
+        if (retrievedChunks.length > 0) {
+          setIsReranking(true);
+          try {
+            // Rerank the retrieved chunks
+            chunksForResponse = await rerankChunksWithLLM(
+              userMessage.content, // Original user query for relevance assessment
+              retrievedChunks,
+              currentLLMModel, // Use the currently selected LLM for reranking
+              5 // Target count of chunks after reranking
+            );
+            console.log("Reranked Chunks:", chunksForResponse);
+            if (chunksForResponse.length === 0 && retrievedChunks.length > 0) {
+                // This means reranking filtered out all initially retrieved chunks
+                toast({
+                    title: 'Re-ranking Filtered All Chunks',
+                    description: 'Initial retrieval found potential matches, but re-ranking determined none were sufficiently relevant. You may want to try a broader query.',
+                    status: 'warning',
+                    duration: 5000,
+                    isClosable: true,
+                });
+            }
+          } catch (rerankError) {
+            console.warn("Re-ranking failed, using initially retrieved chunks (up to 5):", rerankError);
+            toast({
+              title: 'Re-ranking Failed',
+              description: `Could not re-rank chunks. Using initial search results. Error: ${rerankError instanceof Error ? rerankError.message : String(rerankError)}`,
+              status: 'warning',
+              duration: 4000,
+              isClosable: true,
+            });
+            // Fallback to top 5 of initially retrieved chunks if reranking fails
+            chunksForResponse = retrievedChunks.slice(0, 5);
+          } finally {
+            setIsReranking(false);
+          }
+        } else {
+            chunksForResponse = []; // No chunks from initial retrieval if retrievedChunks was empty
+        }
+
+        // Contextual Compression Step
+        let finalContextChunks: RelevantChunk[] = [];
+        if (chunksForResponse.length > 0) {
+          setIsCompressing(true);
+          try {
+            const compressionPromises = chunksForResponse.map(chunk =>
+              compressChunkWithLLM(userMessage.content, chunk, currentLLMModel)
+            );
+            const compressedResults = await Promise.allSettled(compressionPromises);
+
+            compressedResults.forEach((result, index) => {
+              if (result.status === 'fulfilled' && result.value) {
+                finalContextChunks.push({
+                  ...chunksForResponse[index], // Keep original chunk metadata (docId, docName, chunkIndex, original similarity)
+                  text: result.value, // Replace text with compressed version
+                });
+              } else if (result.status === 'fulfilled' && !result.value) {
+                // LLM responded "NONE" or empty, so this chunk is not relevant after compression
+                console.log(`Chunk ${chunksForResponse[index].docId}-${chunksForResponse[index].chunkIndex} deemed not relevant after compression.`);
+              } else if (result.status === 'rejected') {
+                // Compression failed for this chunk, log error, and optionally keep original if desired
+                console.warn(`Compression failed for chunk ${chunksForResponse[index].docId}-${chunksForResponse[index].chunkIndex}, considering keeping original: `, result.reason);
+                // For now, we'll just exclude it if compression fails.
+                // Alternatively, to be more robust to individual compression failures:
+                // finalContextChunks.push(chunksForResponse[index]); // Keep original chunk
+              }
+            });
+
+            if (finalContextChunks.length === 0 && chunksForResponse.length > 0) {
+                toast({
+                    title: 'Contextual Compression Filtered All Chunks',
+                    description: 'Re-ranked chunks were further refined, but no essential information was extracted for the query. Try a different query.',
+                    status: 'warning',
+                    duration: 5000,
+                    isClosable: true,
+                });
+            }
+             console.log("Final Context Chunks (after compression):", finalContextChunks);
+
+          } catch (compressionError) { // Should not happen if individual promises handle errors
+            console.error("Error during overall compression step:", compressionError);
+            // Fallback to using uncompressed (but reranked) chunks
+            finalContextChunks = chunksForResponse;
+          } finally {
+            setIsCompressing(false);
+          }
+        } else {
+            finalContextChunks = chunksForResponse; // chunksForResponse is already [] if no chunks after reranking
+        }
+        // End of Contextual Compression Step
+
+
+        if (finalContextChunks.length === 0) {
           toast({
             title: 'No relevant content found',
             description: 'Could not find relevant sections in your documents for this query. Try rephrasing or checking your documents.',
@@ -92,18 +220,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
             duration: 5000,
             isClosable: true,
           });
-          // Optionally, still proceed to generate a response which might say "I couldn't find relevant info..."
-          // Or return early like above if preferred. For now, we'll let generateResponse handle it.
+          // generateResponse will be called anyway, and it can handle empty chunksForResponse
         }
       }
+      // End of isDocumentChat specific logic for retrieval
 
+      // This part will be restructured in the next step to correctly call generateResponse
+      // for both document and general chat modes.
       const response = await generateResponse({
         message: userMessage.content,
         isDocumentMode: isDocumentChat,
-        relevantChunks: chunksForResponse, // Pass relevant chunks
-        previousMessages: messages.filter(msg => msg.timestamp !== userMessage.timestamp), // Pass previous messages, excluding current user message
-        // analyzeSummary and extractKeyPoints are not directly used by the new relevantChunks logic in api.ts,
-        // but keeping them for now if other parts of your system might use them or if you plan to adapt them.
+        relevantChunks: finalContextChunks, // Use final (potentially compressed) chunks
+        previousMessages: messages.filter(msg => msg.timestamp !== userMessage.timestamp),
         analyzeSummary: true,
         extractKeyPoints: true,
       });
@@ -114,6 +242,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMessage]);
+
     } catch (error) {
       toast({
         title: 'Error',
@@ -121,9 +250,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
         status: 'error',
         duration: 3000,
       });
-      setMessages(prev => prev.slice(0, -1));
+      // Remove the potentially failed user message if an error occurs.
+      setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
     } finally {
       setIsLoading(false);
+      setIsGeneratingHyDE(false); // Ensure HyDE loading is also reset in finally
     }
   };
 
@@ -144,7 +275,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
           fontWeight="500"
           color="gray.700"
         >
-          {isDocumentChat ? 'Document-Focused Chat' : 'General Chat'}
+        {isGeneratingHyDE ? "Enhancing query..." : (isReranking ? "Re-ranking results..." : (isCompressing ? "Compressing context..." : (isDocumentChat ? 'Document-Focused Chat' : 'General Chat')))}
         </Text>
         <HStack spacing={2}>
           <Text 
@@ -161,6 +292,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadat
               setIsDocumentChat(e.target.checked);
             }}
             className="document-chat-switch"
+          isDisabled={isGeneratingHyDE || isLoading || isReranking || isCompressing} // Disable while processing
           />
         </HStack>
       </Flex>

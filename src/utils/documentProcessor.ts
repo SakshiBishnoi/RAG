@@ -8,6 +8,51 @@ import { getCurrentModel, getGeminiClient, getOpenRouterClient, generateWithDeep
 pdfjsLib.GlobalWorkerOptions.workerSrc = 
   `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
+// Helper function to split text into sentences
+// This is a simplified sentence splitter and might not cover all edge cases perfectly.
+// For more robust sentence splitting, a dedicated NLP library would be better.
+function splitIntoSentences(text: string): string[] {
+  if (!text) return [];
+  // Regex to split by common sentence terminators (. ! ?) followed by whitespace or end of string.
+  // It tries to handle some abbreviations (e.g. Mr., Mrs., Dr., U.S.) by not splitting after them if they are not followed by uppercase letter.
+  // This is still a heuristic and might not be perfect.
+  const sentences = text
+    .replace(/([.!?])\s+(?=[A-Z])/g, "$1\r\n") // Add newline after sentence end if followed by uppercase
+    .split(/\r\n/g) // Split by the added newlines
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+
+  // Fallback for texts that might not have strong signals like uppercase starts
+  if (sentences.length <= 1 && text.length > 0) {
+    const simpleSplit = text.match(/[^.!?]+[.!?]+(\s|$)/g);
+    if (simpleSplit && simpleSplit.length > 0) {
+      return simpleSplit.map(s => s.trim()).filter(s => s.length > 0);
+    }
+  }
+  return sentences.length > 0 ? sentences : (text.trim() ? [text.trim()] : []);
+}
+
+
+// Helper function to calculate cosine similarity between two vectors
+function calculateCosineSimilarity(vectorA: number[], vectorB: number[]): number {
+  let dotProduct = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let i = 0; i < vectorA.length; i++) {
+    dotProduct += vectorA[i] * vectorB[i];
+    magnitudeA += vectorA[i] * vectorA[i];
+    magnitudeB += vectorB[i] * vectorB[i];
+  }
+  magnitudeA = Math.sqrt(magnitudeA);
+  magnitudeB = Math.sqrt(magnitudeB);
+
+  if (magnitudeA === 0 || magnitudeB === 0) {
+    return 0; // Avoid division by zero
+  }
+  return dotProduct / (magnitudeA * magnitudeB);
+}
+
+
 // In-memory stores for document chunks and embeddings
 let documentChunks: { [docId: string]: string[] } = {};
 let documentEmbeddings: { [docId: string]: number[][] } = {};
@@ -66,7 +111,10 @@ async function loadModel() {
 export async function processPDFDocument(file: File): Promise<ProcessedDocument> {
   try {
     // Load the Universal Sentence Encoder model
-    const encoder = await loadModel();
+    const modelEncoder = await loadModel(); // Renamed to avoid conflict with 'encoder' variable if any
+    if (!modelEncoder) {
+      throw new Error("Failed to load sentence encoder model.");
+    }
     // Read the PDF file
     const arrayBuffer = await file.arrayBuffer();
     const loadingTask = pdfjsLib.getDocument(arrayBuffer);
@@ -86,61 +134,109 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
       fullText += pageText + '\n\n';  // Add double newline for better paragraph separation
     }
 
-    // Split text into chunks with improved parameters
-    const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: 500,  // Smaller chunks for better context
-      chunkOverlap: 100,  // Maintain context between chunks
-      lengthFunction: (text) => text.split(' ').length,  // Split by words instead of characters
-      separators: ['\n\n', '\n', '. ', ' ', ''],  // More natural text boundaries
-    });
 
-    const chunks = await splitter.createDocuments([fullText]);
-    const processedChunks = chunks.map(chunk => chunk.pageContent.trim());
-    const originalChunkSizes = chunks.map(chunk => chunk.pageContent.length); // Store original chunk sizes
+    // Semantic Chunking Implementation
+    const sentences = splitIntoSentences(fullText);
 
-    // Generate embeddings for each chunk using Universal Sentence Encoder
-    const embeddings = await Promise.all(
-      processedChunks.map(async (chunk) => {
-        const embedding = await encoder.embed(chunk);
-        const data = await embedding.data();
-        return Array.from(data) as number[];
-      })
-    );
+    if (sentences.length === 0) {
+      // Handle documents with no extractable sentences
+      return {
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-empty`,
+        numChunks: 0,
+        summary: 'Document appears to be empty or text could not be extracted.',
+        fullText: fullText,
+        metadata: {
+          name: file.name, type: file.type, pageNumbers: [], chunkSizes: [],
+          processingErrors: ['No sentences found in document.'],
+        }
+      };
+    }
+
+    // Generate sentence embeddings
+    const sentenceEmbeddingsTensors = await Promise.all(sentences.map(s => modelEncoder.embed(s)));
+    const sentenceEmbeddings = await Promise.all(sentenceEmbeddingsTensors.map(tensor => Array.from(tensor.dataSync())));
+    sentenceEmbeddingsTensors.forEach(tensor => tensor.dispose()); // Dispose sentence tensors
+
+    // Calculate inter-sentence similarities
+    const interSentenceSimilarities: number[] = [];
+    for (let i = 0; i < sentenceEmbeddings.length - 1; i++) {
+      const similarity = calculateCosineSimilarity(sentenceEmbeddings[i], sentenceEmbeddings[i + 1]);
+      interSentenceSimilarities.push(similarity);
+    }
+
+    // Identify chunk boundaries using a threshold
+    const SIMILARITY_THRESHOLD = 0.4; // This threshold might need tuning
+
+    // Refined chunking logic:
+    const finalSemanticChunks: string[] = [];
+    if (sentences.length > 0) {
+      let chunkBuffer: string[] = [sentences[0]];
+      for (let i = 0; i < interSentenceSimilarities.length; i++) {
+        if (interSentenceSimilarities[i] < SIMILARITY_THRESHOLD) {
+          finalSemanticChunks.push(chunkBuffer.join(' ').trim());
+          chunkBuffer = [sentences[i+1]]; // Start new chunk
+        } else {
+          chunkBuffer.push(sentences[i+1]); // Continue current chunk
+        }
+      }
+      if (chunkBuffer.length > 0) { // Add the last chunk
+        finalSemanticChunks.push(chunkBuffer.join(' ').trim());
+      }
+    } else if (sentences.length === 1){ // Handle single sentence case
+        finalSemanticChunks.push(sentences[0]);
+    }
+
+
+    // Generate embeddings for the final semantic chunks
+    let finalChunkEmbeddings: number[][] = [];
+    if (finalSemanticChunks.length > 0) {
+        const chunkEmbeddingsTensors = await Promise.all(finalSemanticChunks.map(chunk => modelEncoder.embed(chunk)));
+        finalChunkEmbeddings = await Promise.all(chunkEmbeddingsTensors.map(tensor => Array.from(tensor.dataSync())));
+        chunkEmbeddingsTensors.forEach(tensor => tensor.dispose()); // Dispose chunk tensors
+    }
+
+    const processedChunks = finalSemanticChunks; // Use semantic chunks
+    const embeddings = finalChunkEmbeddings; // Use their embeddings
+    const chunkSizes = processedChunks.map(chunk => chunk.length);
 
     // Store chunks and embeddings in memory
-    const docId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`; // More unique ID
+    const docId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     addDocumentChunks(docId, processedChunks);
     addDocumentEmbeddings(docId, embeddings);
 
-    // Calculate semantic similarity between chunks
-    const similarities = embeddings.map((embedding, i) => {
-      if (i === 0) return 1; // Similarity with itself is 1 or handle as per need
-      if (!embeddings[i-1]) return 0; // Should not happen if logic is correct
-      const normPrev = tf.norm(tf.tensor1d(embeddings[i - 1]));
-      if (normPrev.dataSync()[0] === 0) return 0; // Avoid division by zero if previous embedding is zero vector
-
-      return tf.tensor1d(embedding)
-        .dot(tf.tensor1d(embeddings[i - 1]))
-        .div(tf.norm(tf.tensor1d(embedding)).mul(normPrev))
-        .dataSync()[0];
-    });
+    // The old 'similarities' (inter-chunk) is not directly comparable.
+    // For now, we'll omit it or calculate it based on new chunks if needed.
+    // Let's remove it for now from the ProcessedDocument metadata for semantic chunks.
+    // const semanticSimilarity = undefined; // Or calculate if a new definition is provided
 
     // Generate a summary using the selected model
-    const currentModel = getCurrentModel();
+    const currentModelName = getCurrentModel(); // Renamed to avoid conflict
     let summaryText = '';
     
-    if (currentModel === 'deepseek') {
-      summaryText = await generateWithDeepseek([{
-        type: 'user',
-        content: `Please provide a concise summary of the following document content:\n\n${fullText}`
-      }]);
-    } else {
-      const geminiModel = getGeminiClient().getGenerativeModel({ model: "gemini-2.0-flash-exp" });
-      const summaryResult = await geminiModel.generateContent(
-        `Please provide a concise summary of the following document content:\n\n${fullText}`
-      );
-      summaryText = summaryResult.response.text();
+    // Summary generation should be robust to client initialization issues
+    try {
+      if (currentModelName === 'deepseek') {
+        // Check if OpenRouter is configured before attempting to use it
+        const openRouterClient = getOpenRouterClient(); // This will throw if not configured
+        summaryText = await generateWithOpenRouter([{ // Ensure generateWithOpenRouter is used
+          type: 'user',
+          content: `Please provide a concise summary of the following document content:\n\n${fullText}`
+        }]);
+      } else if (isGeminiConfigured()){ // Check if Gemini is configured
+        const geminiClient = getGeminiClient(); // This will throw if not configured
+        const geminiModel = geminiClient.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+        const summaryResult = await geminiModel.generateContent(
+          `Please provide a concise summary of the following document content:\n\n${fullText}`
+        );
+        summaryText = summaryResult.response.text();
+      } else {
+        summaryText = "Summary generation skipped: No suitable model configured.";
+      }
+    } catch (summaryError) {
+        console.warn("Could not generate summary:", summaryError);
+        summaryText = `Summary generation failed: ${summaryError instanceof Error ? summaryError.message : String(summaryError)}`;
     }
+
 
     return {
       id: docId,
@@ -150,24 +246,24 @@ export async function processPDFDocument(file: File): Promise<ProcessedDocument>
       metadata: {
         name: file.name,
         type: file.type,
-        pageNumbers: Array.from({ length: pdf.numPages }, (_, i) => i + 1),
-        chunkSizes: originalChunkSizes, // Use original chunk sizes
-        semanticSimilarity: similarities
+        pageNumbers: Array.from({ length: pdf.numPages }, (_, i) => i + 1), // Page numbers still relevant
+        chunkSizes: chunkSizes, // Use new chunk sizes
+        // semanticSimilarity: undefined, // Removed as per previous note
       }
     };
   } catch (error) {
-    console.error('Error processing PDF:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('Error processing PDF with semantic chunking:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error during PDF processing.';
     // Construct a ProcessedDocument compatible error response
-    const docId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-error`;
+    const errorDocId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-error`;
     return {
-      id: docId,
+      id: errorDocId,
       numChunks: 0,
-      fullText: '',
+      fullText: (error as any)?.fullText || '', // Try to retain fullText if available from partial processing
       summary: '',
       metadata: {
-        name: file.name,
-        type: file.type,
+        name: file?.name || "Unknown file", // file might be undefined if error is very early
+        type: file?.type || "Unknown type",
         pageNumbers: [],
         chunkSizes: [],
         processingErrors: [errorMessage],
@@ -185,25 +281,36 @@ export interface RelevantChunk {
   similarity: number;
 }
 
-// Function to retrieve relevant chunks based on a query
+// Function to retrieve relevant chunks based on a query or a pre-computed embedding
 export async function retrieveRelevantChunks(
-  query: string,
+  queryOrEmbedding: string | number[], // Accepts string (original query) or number[] (HyDE embedding)
   activeDocIds: string[],
   allDocsMetadata: Array<{ id: string; name: string; processed?: boolean }>,
   topK: number = 5,
 ): Promise<RelevantChunk[]> {
-  const model = await loadModel();
-  if (!model) {
+  const sentenceEncoderModel = await loadModel(); // Renamed for clarity
+  if (!sentenceEncoderModel) {
     console.error("Failed to load the Universal Sentence Encoder model.");
     return [];
   }
 
-  let queryEmbeddingTensor: tf.Tensor | null = null;
-  const allRelevantChunks: RelevantChunk[] = [];
+  let queryEmbedding: number[];
+  let queryEmbeddingTensorInternal: tf.Tensor | null = null; // For disposal if created internally
 
   try {
-    queryEmbeddingTensor = await model.embed(query);
-    const queryEmbedding = Array.from(await queryEmbeddingTensor.data()) as number[];
+    if (typeof queryOrEmbedding === 'string') {
+      queryEmbeddingTensorInternal = await sentenceEncoderModel.embed(queryOrEmbedding);
+      queryEmbedding = Array.from(await queryEmbeddingTensorInternal.dataSync());
+    } else {
+      queryEmbedding = queryOrEmbedding;
+    }
+
+    if (!queryEmbedding || queryEmbedding.length === 0) {
+      console.error("Query embedding is empty.");
+      return [];
+    }
+
+    const allRelevantChunks: RelevantChunk[] = [];
 
     for (const docId of activeDocIds) {
       const chunks = getDocumentChunks(docId);
@@ -271,7 +378,7 @@ export async function retrieveRelevantChunks(
   } catch (error) {
     console.error("Error during chunk retrieval or embedding generation:", error);
   } finally {
-    queryEmbeddingTensor?.dispose();
+    queryEmbeddingTensorInternal?.dispose(); // Dispose only if created internally
   }
 
   // Sort by similarity in descending order and return topK
