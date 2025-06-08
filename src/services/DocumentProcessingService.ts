@@ -110,10 +110,19 @@ export class DocumentProcessingService {
 
     if (sentences.length > 0) {
         try {
-            // Removed tf.tidy() wrapper for the async block
-            const sentenceEmbeddingsTensor = await this.sentenceEncoder.embed(sentences);
-            const sentenceEmbeddings = await sentenceEmbeddingsTensor.array() as number[][];
-            tf.dispose(sentenceEmbeddingsTensor as unknown as tf.Tensor); // Using double assertion
+            const allSentenceEmbeddings: number[][] = [];
+            const SENTENCE_EMBEDDING_BATCH_SIZE = 64; // Tunable
+
+            for (let i = 0; i < sentences.length; i += SENTENCE_EMBEDDING_BATCH_SIZE) {
+              const batchSentences = sentences.slice(i, i + SENTENCE_EMBEDDING_BATCH_SIZE);
+              if (batchSentences.length > 0) {
+                const batchSentenceEmbeddingsTensor = await this.sentenceEncoder.embed(batchSentences);
+                const batchEmbeddingsArray = await batchSentenceEmbeddingsTensor.array() as number[][];
+                allSentenceEmbeddings.push(...batchEmbeddingsArray);
+                tf.dispose(batchSentenceEmbeddingsTensor as unknown as tf.Tensor); // Dispose tensor for this batch
+              }
+            }
+            const sentenceEmbeddings = allSentenceEmbeddings; // Use this for similarity calculation
 
             const SIMILARITY_THRESHOLD = 0.4;
             let currentChunkSentences: string[] = [];
@@ -134,12 +143,18 @@ export class DocumentProcessingService {
                 finalChunks.push(currentChunkSentences.join(' ').trim());
             }
 
+            const CHUNK_EMBEDDING_BATCH_SIZE = 32; // Tunable
             if (finalChunks.length > 0) {
-                const finalChunkEmbeddingsTensor = await this.sentenceEncoder.embed(finalChunks);
-                const embeddingsArray = await finalChunkEmbeddingsTensor.array() as number[][];
-                finalChunkEmbeddings.push(...embeddingsArray);
-                tf.dispose(finalChunkEmbeddingsTensor as unknown as tf.Tensor); // Using double assertion
-                finalChunks.forEach(chunk => chunkSizes.push(chunk.length));
+              for (let i = 0; i < finalChunks.length; i += CHUNK_EMBEDDING_BATCH_SIZE) {
+                const batchChunks = finalChunks.slice(i, i + CHUNK_EMBEDDING_BATCH_SIZE);
+                if (batchChunks.length > 0) {
+                  const batchChunkEmbeddingsTensor = await this.sentenceEncoder.embed(batchChunks);
+                  const embeddingsArray = await batchChunkEmbeddingsTensor.array() as number[][];
+                  finalChunkEmbeddings.push(...embeddingsArray); // Accumulate batch embeddings
+                  tf.dispose(batchChunkEmbeddingsTensor as unknown as tf.Tensor); // Dispose tensor for this batch
+                }
+              }
+              finalChunks.forEach(chunk => chunkSizes.push(chunk.length));
             }
         } catch (embeddingError: any) {
             console.error(`Error during semantic chunking or embedding for ${docName}:`, embeddingError);
