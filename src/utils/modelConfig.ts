@@ -28,6 +28,20 @@ export function initializeModels(config: {
   siteUrl?: string;
   siteName?: string;
 }) {
+  // IMPORTANT SECURITY NOTE:
+  // The API keys used here (REACT_APP_GEMINI_API_KEY, REACT_APP_OPENROUTER_API_KEY, which are passed in via `config`)
+  // are exposed in the client-side JavaScript bundle if this application is built as a standard SPA (e.g., with Create React App).
+  // This is a significant security risk for production applications, as it allows anyone to potentially use your API keys.
+  //
+  // For production environments, these API calls should ideally be proxied through a backend server
+  // where API keys can be kept secret. The backend server would make the actual calls to Gemini/OpenRouter.
+  //
+  // The `dangerouslyAllowBrowser: true` flag for the OpenAI client (used for OpenRouter)
+  // explicitly acknowledges that the client is intended to be run in a browser environment,
+  // but this does not mitigate the risk of exposing the API key if it's embedded in client-side code.
+  // Always ensure your .env variables are correctly configured and not committed to your repository if they contain sensitive keys.
+  // For local development, using .env files is standard, but for deployment, a backend proxy is the recommended secure approach.
+
   geminiClient = new GoogleGenerativeAI(config.geminiApiKey);
   
   openRouterClient = new OpenAI({

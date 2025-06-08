@@ -15,6 +15,8 @@ import {
 import { motion } from 'framer-motion';
 import '../styles/ChatInterface.css';
 import { generateResponse } from '../utils/api';
+import { retrieveRelevantChunks, RelevantChunk } from '../utils/documentProcessor';
+import { FileDocument } from '../App'; // Import FileDocument from App
 import ReactMarkdown from 'react-markdown';
 
 const MotionBox = motion(Box);
@@ -28,7 +30,11 @@ interface Message {
   keyPoints?: string[];
 }
 
-const ChatInterface: React.FC = () => {
+interface ChatInterfaceProps {
+  documents: FileDocument[]; // Documents passed from App.tsx
+}
+
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ documents: allDocsMetadata }) => { // Renamed documents prop to allDocsMetadata for clarity
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -58,17 +64,46 @@ const ChatInterface: React.FC = () => {
       setMessages(prev => [...prev, userMessage]);
       setInputValue('');
 
-      const documents = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]');
-      
-      if (isDocumentChat && documents.length === 0) {
-        throw new Error('Please upload documents first to use document chat mode');
+      let chunksForResponse: RelevantChunk[] = [];
+      if (isDocumentChat) {
+        // Use allDocsMetadata from props
+        const activeDocIds = allDocsMetadata.filter(doc => doc.processed).map(doc => doc.id);
+
+        if (activeDocIds.length === 0) {
+          toast({
+            title: 'No processed documents',
+            description: 'Please upload and process documents first to use document chat mode.',
+            status: 'warning',
+            duration: 5000,
+            isClosable: true,
+          });
+          setIsLoading(false);
+          // Remove the user message if we're not proceeding
+          setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
+          return;
+        }
+        chunksForResponse = await retrieveRelevantChunks(userMessage.content, activeDocIds, allDocsMetadata, 5);
+
+        if (chunksForResponse.length === 0) {
+          toast({
+            title: 'No relevant content found',
+            description: 'Could not find relevant sections in your documents for this query. Try rephrasing or checking your documents.',
+            status: 'info',
+            duration: 5000,
+            isClosable: true,
+          });
+          // Optionally, still proceed to generate a response which might say "I couldn't find relevant info..."
+          // Or return early like above if preferred. For now, we'll let generateResponse handle it.
+        }
       }
 
       const response = await generateResponse({
         message: userMessage.content,
         isDocumentMode: isDocumentChat,
-        documents: documents,
-        previousMessages: messages,
+        relevantChunks: chunksForResponse, // Pass relevant chunks
+        previousMessages: messages.filter(msg => msg.timestamp !== userMessage.timestamp), // Pass previous messages, excluding current user message
+        // analyzeSummary and extractKeyPoints are not directly used by the new relevantChunks logic in api.ts,
+        // but keeping them for now if other parts of your system might use them or if you plan to adapt them.
         analyzeSummary: true,
         extractKeyPoints: true,
       });

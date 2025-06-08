@@ -17,19 +17,21 @@ if (process.env.REACT_APP_GEMINI_API_KEY && process.env.REACT_APP_OPENROUTER_API
   });
 }
 
+import { RelevantChunk } from './documentProcessor'; // Import RelevantChunk
+
 interface GenerateResponseParams {
   message: string;
   isDocumentMode: boolean;
-  documents?: any[];
+  relevantChunks?: RelevantChunk[]; // Changed from documents to relevantChunks
   previousMessages?: any[];
-  analyzeSummary?: boolean;
-  extractKeyPoints?: boolean;
+  analyzeSummary?: boolean; // These might be re-evaluated later
+  extractKeyPoints?: boolean; // These might be re-evaluated later
 }
 
 export async function generateResponse({
   message,
   isDocumentMode,
-  documents = [],
+  relevantChunks = [], // Changed from documents to relevantChunks
   previousMessages = []
 }: GenerateResponseParams): Promise<string> {
   const currentModel = getCurrentModel();
@@ -52,34 +54,35 @@ export async function generateResponse({
 
     let prompt = "";
     if (isDocumentMode) {
-      // Create context from documents with better formatting
-      const documentContext = documents
-        .map(doc => {
-          const chunks = doc.content.split('\n\n');
-          return `Document: ${doc.name}\n\nRelevant Sections:\n${chunks
-            .map((chunk: string, i: number) => `[Section ${i + 1}] ${chunk.trim()}`)
-            .join('\n\n')}`;
+      if (!relevantChunks || relevantChunks.length === 0) {
+        return "No relevant document sections found to answer your query. Please try rephrasing or ensure relevant documents are processed.";
+      }
+      // Create context from relevant chunks
+      const documentContext = relevantChunks
+        .map(chunk => {
+          return `Document: ${chunk.docName}\nChunk Index: ${chunk.chunkIndex}\nSimilarity: ${chunk.similarity.toFixed(4)}\n\nContent:\n${chunk.text.trim()}`;
         })
         .join('\n\n---\n\n');
 
-      prompt = `You are a helpful AI assistant specialized in analyzing and answering questions about the provided documents. Your responses must be:
+      // Enhanced Prompt for Document Mode
+      prompt = `You are an AI assistant. Your task is to answer questions based *only* on the following text excerpts.
 
-1. Strictly based on the document content below
-2. Clearly reference which document and section you're using (e.g., "According to Document X, Section Y...")
-3. If the answer isn't in the documents, say "This information is not found in the provided documents"
+**Instructions for Responding:**
+*   Base your answers strictly on the information contained in the text excerpts provided below. Do not use any external knowledge or make assumptions.
+*   When quoting directly or paraphrasing specific information, *always* follow with a citation like (Document: [docName], Chunk: [chunkIndex]). Replace [docName] and [chunkIndex] with the actual document name and chunk index from the source excerpt.
+*   If the answer requires synthesizing information from multiple excerpts, do so concisely. Cite all relevant source excerpts clearly.
+*   If the answer to the question cannot be found *within the provided text excerpts*, explicitly state: 'Based on the provided information, I cannot answer this question.'
+*   Respond in a clear, concise, and factual manner.
 
-Document Context:
+**Relevant Information Extracted from Documents:**
 ${documentContext}
 
-Previous Conversation:
+**Previous Conversation:**
 ${chatHistory}
 
-User Question: ${message}
+**User Question:** ${message}
 
-Please provide a response that:
-1. Directly quotes relevant sections when possible
-2. Clearly cites which document and section each piece of information comes from
-3. Does not make up information not present in the documents`;
+Please provide a detailed and accurate response following all instructions above.`;
     } else {
       prompt = `You are a helpful AI assistant. Please provide a general response based on your knowledge.
 

@@ -3,8 +3,25 @@ import { ChakraProvider, Box, Container, extendTheme, Text, Select } from '@chak
 import DocumentUpload from './components/DocumentUpload';
 import ChatInterface from './components/ChatInterface';
 import DocumentList from './components/DocumentList';
-import { ProcessedDocument } from './utils/documentProcessor';
+// import { ProcessedDocument } from './utils/documentProcessor'; // Type from here is less relevant now for App's main state
+import { clearDocumentFromInMemoryStore } from './utils/documentProcessor'; // For deletion
 import { setCurrentModel, getCurrentModel } from './utils/modelConfig';
+
+// Define FileDocument interface, similar to DocumentUpload.tsx's local one
+export interface FileDocument {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  timestamp: string;
+  processed: boolean;
+  summary?: string;
+  numChunks?: number;
+  previewContent?: string;
+  fullTextLength?: number;
+  processingErrors?: string[]; // Added to reflect processing errors
+  // content: string; // This was in DocumentUpload's tempDoc, ensure consistency or handle if needed
+}
 
 const theme = extendTheme({
   styles: {
@@ -74,8 +91,14 @@ const theme = extendTheme({
 });
 
 function App() {
-  const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
+  const [documents, setDocuments] = useState<FileDocument[]>([]);
   const [selectedModel, setSelectedModel] = useState<'gemini' | 'deepseek'>(getCurrentModel());
+
+  // Load documents from localStorage on initial mount
+  useEffect(() => {
+    const storedDocs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]') as FileDocument[];
+    setDocuments(storedDocs);
+  }, []);
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const model = e.target.value as 'gemini' | 'deepseek';
@@ -83,16 +106,37 @@ function App() {
     setCurrentModel(model);
   };
 
-  useEffect(() => {
-    const loadDocuments = () => {
-      const docs = JSON.parse(localStorage.getItem('uploadedDocuments') || '[]');
-      setDocuments(docs);
-    };
+  // Functions to manage document metadata
+  const addDocumentMetadata = (doc: FileDocument) => {
+    setDocuments(prevDocs => {
+      const newDocs = [...prevDocs, doc];
+      localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
+      return newDocs;
+    });
+  };
 
-    loadDocuments();
-    window.addEventListener('documentsUpdated', loadDocuments);
-    return () => window.removeEventListener('documentsUpdated', loadDocuments);
-  }, []);
+  const updateDocumentMetadata = (docId: string, updates: Partial<FileDocument>) => {
+    setDocuments(prevDocs => {
+      const newDocs = prevDocs.map(d => d.id === docId ? { ...d, ...updates } : d);
+      localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
+      return newDocs;
+    });
+  };
+
+  const deleteDocumentMetadata = (docId: string) => {
+    clearDocumentFromInMemoryStore(docId); // Clear from in-memory stores
+    setDocuments(prevDocs => {
+      const newDocs = prevDocs.filter(d => d.id !== docId);
+      localStorage.setItem('uploadedDocuments', JSON.stringify(newDocs));
+      return newDocs;
+    });
+  };
+
+  // Calculate statistics
+  const totalDocuments = documents.length;
+  const totalChunks = documents.reduce((acc, doc) => acc + (doc.processed && doc.numChunks ? doc.numChunks : 0), 0);
+  const averageChunksPerDocument = totalDocuments > 0 ? parseFloat((totalChunks / totalDocuments).toFixed(1)) : 0;
+
 
   return (
     <ChakraProvider theme={theme}>
@@ -131,7 +175,11 @@ function App() {
                 lg: "1/3"
               }}
             >
-              <DocumentUpload />
+              <DocumentUpload
+                allDocuments={documents}
+                onAddDocument={addDocumentMetadata}
+                onUpdateDocument={updateDocumentMetadata}
+              />
             </Box>
             <Box
               display={{ base: "none", lg: "block" }}
@@ -145,7 +193,20 @@ function App() {
               <Text fontSize="lg" fontWeight="500" mb={3}>
                 Quick Stats
               </Text>
-              {/* Add quick stats here */}
+              <VStack spacing={2} align="stretch">
+                <HStack justify="space-between">
+                  <Text fontSize="sm">Total Documents:</Text>
+                  <Text fontSize="sm" fontWeight="500">{totalDocuments}</Text>
+                </HStack>
+                <HStack justify="space-between">
+                  <Text fontSize="sm">Total Chunks (Processed):</Text>
+                  <Text fontSize="sm" fontWeight="500">{totalChunks}</Text>
+                </HStack>
+                <HStack justify="space-between">
+                  <Text fontSize="sm">Avg. Chunks/Document:</Text>
+                  <Text fontSize="sm" fontWeight="500">{averageChunksPerDocument}</Text>
+                </HStack>
+              </VStack>
             </Box>
           </Box>
 
@@ -170,7 +231,10 @@ function App() {
               p={3}
               shadow="sm"
             >
-              <DocumentList />
+              <DocumentList
+                documents={documents}
+                onDeleteDocument={deleteDocumentMetadata}
+              />
             </Box>
             <Box 
               h="100%"
@@ -181,7 +245,7 @@ function App() {
               bg="white"
               shadow="sm"
             >
-              <ChatInterface />
+              <ChatInterface documents={documents} />
             </Box>
           </Box>
         </Container>
