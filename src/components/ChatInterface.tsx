@@ -70,15 +70,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
-    setIsLoading(true);
+    if (!inputValue.trim()) return;
+
+    const userMessageContent = inputValue.trim();
+    const userMessageTimestamp = new Date();
+
+    const userMessage: Message = {
+      type: 'user',
+      content: userMessageContent,
+      timestamp: userMessageTimestamp,
+    };
+
+    // Optimistic UI update
+    setMessages(prev => [...prev, userMessage]);
+    setInputValue(''); // Clear input after capturing content
+
     try {
-      const userMessage: Message = {
-        type: 'user',
-        content: inputValue.trim(),
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, userMessage]);
-      setInputValue('');
+      setIsLoading(true); // Set loading true before async operations begin
 
       let queryForRetrieval: string | number[] = userMessage.content;
       let chunksForResponse: RelevantChunk[] = []; // Holds chunks after re-ranking
@@ -294,12 +302,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
         duration: 3000,
       });
       // Remove the potentially failed user message if an error occurs.
-      setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp));
+      setMessages(prev => prev.filter(msg => msg.timestamp !== userMessage.timestamp)); // userMessage.timestamp is accessible
     } finally {
       setIsLoading(false);
       setIsGeneratingHyDE(false);
-      setIsReranking(false);    // Ensure all loading states are reset
-      setIsCompressing(false);  // Ensure all loading states are reset
+      setIsReranking(false);
+      setIsCompressing(false);
     }
   };
 

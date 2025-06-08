@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Button, Text, useToast, Progress, Flex, Icon, VStack } from '@chakra-ui/react';
 import { motion } from 'framer-motion';
 import { FiUploadCloud } from 'react-icons/fi';
-// import { processPDFDocument } from '../utils/documentProcessor'; // No longer used directly
-import { FileDocument } from '../App'; // Import FileDocument from App
+import { FileDocument } from '../App'; // Assuming FileDocument is exported from App.tsx
 
 const MotionBox = motion(Box);
+const MAX_DOCS_COUNT = 5;
 const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50MB
 
 interface DocumentUploadProps {
   allDocuments: FileDocument[];
-  onAddInitialDoc: (doc: FileDocument) => void; // Renamed prop
-  onProcessFile: (file: File, tempDocId: string) => Promise<void>; // New prop
-  // onUpdateDocument is effectively replaced by onProcessFile's orchestration in App.tsx
+  onAddInitialDoc: (doc: FileDocument) => void;
+  onProcessFile: (file: File, tempDocId: string) => Promise<void>;
 }
 
 const DocumentUpload: React.FC<DocumentUploadProps> = ({
@@ -20,105 +19,93 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
   onAddInitialDoc,
   onProcessFile,
 }) => {
-  const [totalSize, setTotalSize] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [totalSize, setTotalSize] = useState(0);
   const toast = useToast();
 
   useEffect(() => {
-    // Calculate total size from props
-    const currentTotalSize = allDocuments.reduce((acc, doc) => acc + doc.size, 0);
-    setTotalSize(currentTotalSize);
+    const currentSize = allDocuments.reduce((acc, doc) => acc + doc.size, 0);
+    setTotalSize(currentSize);
   }, [allDocuments]);
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) {
+      return;
+    }
 
-    if (allDocuments.length + files.length > 5) {
+    if (allDocuments.length + files.length > MAX_DOCS_COUNT) {
       toast({
         title: 'Upload limit exceeded',
-        description: 'You can only upload up to 5 documents',
+        description: `You can only upload up to ${MAX_DOCS_COUNT} documents. You have ${allDocuments.length}, trying to add ${files.length}.`,
         status: 'error',
+        duration: 5000,
+        isClosable: true,
       });
+      // Clear the file input so the same files can be re-selected if needed after correction
+      if (event.target) {
+        event.target.value = '';
+      }
       return;
     }
 
-    // Check total size limit if adding these files
-    let sizeOfNewFiles = 0;
+    let newFilesTotalSize = 0;
     for (let i = 0; i < files.length; i++) {
-      sizeOfNewFiles += files[i].size;
+        newFilesTotalSize += files[i].size;
     }
-    if (totalSize + sizeOfNewFiles > MAX_TOTAL_SIZE) {
-      toast({
-        title: 'Storage limit exceeded',
-        description: `Adding these files would exceed the ${MAX_TOTAL_SIZE / (1024*1024)}MB storage limit.`,
-        status: 'error',
-      });
-      return;
+    if (totalSize + newFilesTotalSize > MAX_TOTAL_SIZE) {
+        toast({
+            title: 'Storage limit exceeded',
+            description: `Uploading these files would exceed the ${MAX_TOTAL_SIZE / (1024*1024)}MB storage limit.`,
+            status: 'error',
+            duration: 5000,
+            isClosable: true,
+        });
+        if (event.target) {
+            event.target.value = '';
+        }
+        return;
     }
 
     setIsProcessing(true);
+    const processingPromises: Promise<void>[] = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      // Generate a temporary ID for the initial state update.
-      // This temp ID will be used to update the correct document once processing is done.
-      const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const tempDocId = Date.now().toString() + '-' + Math.random().toString(36).substring(2, 9) + '-' + file.name;
 
-      try {
-        const tempDoc: FileDocument = {
-          id: tempId, // Use temporary ID
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          timestamp: new Date().toISOString(),
-          processed: false, // Initially not processed
-          numChunks: 0,     // Default value
-          // previewContent and fullTextLength will be populated by App.tsx after processing
-        };
-        onAddDocument(tempDoc); // Add document with temp metadata to App state
+      const tempFileDocument: FileDocument = {
+        id: tempDocId,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        timestamp: new Date().toISOString(),
+        processed: false,
+        numChunks: 0,
+      };
 
-        const processedDocData = await processPDFDocument(file); // This returns the final ID
-        
-        // Prepare updates for the document, using the final ID from processing.
-        // The tempDoc.id is used to find and update the correct entry in App.tsx
-        const updates: Partial<FileDocument> = {
-          id: processedDocData.id, // This is the final ID
-          processed: true,
-          summary: processedDocData.summary,
-          numChunks: processedDocData.numChunks,
-          previewContent: processedDocData.fullText.substring(0, 1000),
-          fullTextLength: processedDocData.fullText.length,
-          // Ensure other fields like name, type, size, timestamp are implicitly kept from tempDoc via spread in App's update
-        };
+      onAddInitialDoc(tempFileDocument);
+      processingPromises.push(onProcessFile(file, tempDocId));
+    }
 
-        // Pass the temporary ID for finding, and the updates (which include the final ID)
-        onUpdateDocument(tempId, updates);
-
+    try {
+        await Promise.all(processingPromises);
+    } catch (error) {
+        console.error("Error in one or more onProcessFile calls during Promise.all:", error);
         toast({
-          title: 'Document processed',
-          description: `${file.name} is ready for querying`,
-          status: 'success',
+            title: "Upload Error",
+            description: "There was an issue initiating the processing for some files. Check console for details.",
+            status: "error",
+            isClosable: true,
         });
-      } catch (error) {
-        toast({
-          title: 'Error processing document',
-          description: `Failed to process ${file.name}. It will be removed.`,
-          status: 'error',
-        });
-        // If processing fails, it's good practice to remove the tempDoc from App state
-        // This requires a delete function passed from App.tsx, or handle it in onUpdate by passing error status
-        // For now, we assume onUpdateDocument handles merging, and if it failed, the doc remains 'processed: false'
-        // Or, if App.tsx's deleteDocumentMetadata is available, call it:
-        // props.onDeleteDocument(tempId); // This would require onDeleteDocument in props
-        // For this refactor, let's assume the 'processed: false' state is enough and App.tsx handles it if needed.
-        // Or even better, update it to reflect the error:
-        onUpdateDocument(tempId, { processingErrors: [error instanceof Error ? error.message : String(error)], processed: false });
-      }
+    }
+
+    // Clear the file input after processing initiation
+    if (event.target) {
+        event.target.value = '';
     }
     setIsProcessing(false);
-    // Total size will be updated via useEffect watching allDocuments prop
-  };
+  }, [allDocuments, onAddInitialDoc, onProcessFile, toast, totalSize]);
 
   return (
     <MotionBox
@@ -130,45 +117,43 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
       p={4}
       shadow="sm"
     >
-      <Flex direction={{ base: "column", md: "row" }} align="center" gap={4}>
+      <Flex direction={{ base: 'column', md: 'row' }} align="center" gap={4}>
         <VStack spacing={3} align="start" flex={1}>
           <Flex align="center" gap={3}>
-            <Icon 
-              as={FiUploadCloud} 
-              w={6} 
-              h={6} 
-              color={isProcessing ? "blue.500" : "gray.400"} 
+            <Icon
+              as={FiUploadCloud}
+              w={6}
+              h={6}
+              color={isProcessing ? 'blue.500' : 'gray.400'}
             />
             <Text fontSize="lg" fontWeight="500">
               Upload Documents
             </Text>
           </Flex>
-          
           <Box w="100%">
             <Flex justify="space-between" mb={1.5} fontSize="sm" color="gray.600">
               <Text>{(totalSize / (1024 * 1024)).toFixed(1)} MB used</Text>
               <Text>{(MAX_TOTAL_SIZE / (1024 * 1024)).toFixed(0)} MB total</Text>
             </Flex>
-            <Progress 
-              value={(totalSize / MAX_TOTAL_SIZE) * 100} 
-              size="sm" 
-              colorScheme="blue" 
+            <Progress
+              value={(totalSize / MAX_TOTAL_SIZE) * 100}
+              size="sm"
+              colorScheme="blue"
               borderRadius="full"
               bg="gray.100"
               isIndeterminate={isProcessing}
             />
           </Box>
         </VStack>
-
         <Box>
           <input
             type="file"
             multiple
-            accept=".txt,.pdf,.docx"
+            accept=".pdf,.txt,.md,.docx" // Expanded accept list
             onChange={handleFileUpload}
             style={{ display: 'none' }}
             id="file-upload"
-            disabled={isProcessing}
+            disabled={isProcessing || allDocuments.length >= MAX_DOCS_COUNT}
           />
           <Button
             as="label"
@@ -177,11 +162,11 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
             size="md"
             variant="solid"
             px={6}
-            isDisabled={isProcessing}
-            cursor={isProcessing ? "not-allowed" : "pointer"}
-            minW={{ base: "full", md: "auto" }}
+            isDisabled={isProcessing || allDocuments.length >= MAX_DOCS_COUNT}
+            cursor={(isProcessing || allDocuments.length >= MAX_DOCS_COUNT) ? 'not-allowed' : 'pointer'}
+            minW={{ base: 'full', md: 'auto' }}
           >
-            {isProcessing ? 'Processing...' : 'Choose Files'}
+            {isProcessing ? 'Processing...' : (allDocuments.length >= MAX_DOCS_COUNT ? `Limit ${MAX_DOCS_COUNT} Docs` : 'Choose Files')}
           </Button>
         </Box>
       </Flex>
